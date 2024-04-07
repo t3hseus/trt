@@ -1,0 +1,5 @@
+datasets==2.18.0
+gin==0.1.6
+ipykernel==6.29.4
+matplotlib==3.8.4
+numpy==1.26.4
