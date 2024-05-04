@@ -2,23 +2,27 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.express.colors import sample_colorscale
 from typing import Tuple
-from .data_generation import Event
+from .data_generation import ArrayNx3, ArrayN, Array3
+from .constants import OX_RANGE, OY_RANGE, OZ_RANGE
 
 
 def draw_event(
-    event: Event,
-    x_coord_range: Tuple[float, float] = (-851., 851.),
-    y_coord_range: Tuple[float, float] = (-851., 851.),
-    z_coord_range: Tuple[float, float] = (-2386., 2386.),
+    hits: ArrayNx3[np.float32],
+    fakes: ArrayNx3[np.float32],
+    vertex: Array3[np.float32],
+    labels: ArrayN[np.int32],
+    x_coord_range: Tuple[float, float] = OX_RANGE,
+    y_coord_range: Tuple[float, float] = OY_RANGE,
+    z_coord_range: Tuple[float, float] = OZ_RANGE,
     colorscale: str = "Plotly3"
 ) -> go.Figure:
 
     fig = go.Figure()
-    uniq_tracks = np.unique(event.track_ids)
+    uniq_tracks = np.unique(labels)
     colors = sample_colorscale(colorscale, uniq_tracks / uniq_tracks.max())
 
     for i, label in enumerate(uniq_tracks):
-        track_hits = event.hits[event.track_ids == label]
+        track_hits = hits[labels == label]
         fig.add_trace(go.Scatter3d(
             x=track_hits[:, 0],
             y=track_hits[:, 1],
@@ -33,9 +37,9 @@ def draw_event(
 
     # draw vertex
     fig.add_trace(go.Scatter3d(
-        x=[event.vertex.x],
-        y=[event.vertex.y],
-        z=[event.vertex.z],
+        x=[vertex[0]],
+        y=[vertex[1]],
+        z=[vertex[2]],
         marker=dict(
             size=2,
             color="red",
@@ -46,9 +50,9 @@ def draw_event(
 
     # draw fakes
     fig.add_trace(go.Scatter3d(
-        x=event.fakes[:, 0],
-        y=event.fakes[:, 1],
-        z=event.fakes[:, 2],
+        x=fakes[:, 0],
+        y=fakes[:, 1],
+        z=fakes[:, 2],
         marker=dict(
             size=1,
             color="gray",
