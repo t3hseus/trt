@@ -3,3 +3,5 @@ gin==0.1.6
 ipykernel==6.29.4
 matplotlib==3.8.4
 numpy==1.26.4
+plotly==5.22.0
+nbformat>=4.2.0
