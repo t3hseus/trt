@@ -7,6 +7,10 @@ from typing import Annotated, Literal, TypeVar
 
 
 DType = TypeVar("DType", bound=np.generic)
+TParamsArr = Annotated[
+    npt.NDArray[DType],
+    Literal["phi", "theta", "pt", "charge"]
+]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
@@ -65,6 +69,10 @@ class TrackParams:
     @cached_property
     def phit(self) -> np.float32:
         return self.phi - np.pi / 2
+
+    @cached_property
+    def numpy(self) -> TParamsArr[np.float32]:
+        return np.asarray([self.phi, self.theta, self.pt, self.charge], dtype=np.float32)
 
     def __str__(self) -> str:
         return (f"TrackParams(phi={self.phi:.2f}, theta={self.theta:.2f}, "
