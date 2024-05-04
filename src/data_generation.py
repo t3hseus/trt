@@ -1,11 +1,33 @@
 import numpy as np
+import numpy.typing as npt
 import dataclasses as _dc
 from functools import cached_property
 from typing import Tuple, Optional, Any, Mapping
+from typing import Annotated, Literal, TypeVar
+
+
+DType = TypeVar("DType", bound=np.generic)
+Array3 = Annotated[npt.NDArray[DType], Literal[3]]
+ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
+ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
 
 
 @_dc.dataclass(frozen=True)
-class Vertex:
+class Momentum:
+    px: np.float32
+    py: np.float32
+    pz: np.float32
+
+    @cached_property
+    def numpy(self) -> Array3[np.float32]:
+        return np.asarray([self.px, self.py, self.pz], dtype=np.float32)
+
+    def __str__(self) -> str:
+        return f"Momentum(px={self.px:.2f}, py={self.py:.2f}, pz={self.pz:.2f})"
+
+
+@_dc.dataclass(frozen=True)
+class Point:
     x: np.float32
     y: np.float32
     z: np.float32
@@ -15,8 +37,15 @@ class Vertex:
         return np.sqrt(self.x*self.x + self.y*self.y)
 
     @cached_property
-    def numpy(self) -> np.ndarray[3, np.float32]:
+    def numpy(self) -> Array3[np.float32]:
         return np.asarray([self.x, self.y, self.z], dtype=np.float32)
+
+    def __str__(self) -> str:
+        return f"Point(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
+
+
+@_dc.dataclass(frozen=True)
+class Vertex(Point):
 
     def __str__(self) -> str:
         return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
@@ -42,17 +71,59 @@ class TrackParams:
                 f"pt={self.pt:.2f}, charge={self.charge})")
 
 
-@_dc.dataclass(frozen=True)
 class Event:
     """Single generated event"""
-    hits: np.ndarray[(Any, 3), np.float32]
-    momentums: np.ndarray[(Any, 3), np.float32]  # px, py, pz
-    fakes: np.ndarray[(Any, 3), np.float32]  # fake hits
-    track_ids: np.ndarray[Any, np.float32]
-    missing_hits_mask: np.ndarray[Any, np.bool_]
-    vertex: Vertex  # vx, vy, vz
-    # mapping from track_id to its params
-    track_params: Mapping[int, TrackParams]
+
+    def __init__(
+            self,
+            hits: ArrayNx3[np.float32],
+            track_ids: ArrayN[np.int32],
+            momentums: ArrayNx3[np.float32],
+            fakes: ArrayNx3[np.float32],
+            missing_hits_mask: ArrayN[np.bool_],
+            vertex: Vertex,
+            track_params: Mapping[int, TrackParams]
+    ) -> None:
+        # original values before applying missing_hits_mask
+        self._hits = hits
+        self._track_ids = track_ids
+        self._momentums = momentums  # px, py, pz
+        self._fakes = fakes  # fake hits
+        self._missing_hits_mask = missing_hits_mask
+        self._vertex = vertex  # vx, vy, vz
+        # mapping from track_id to its params
+        self._track_params = track_params
+
+    @cached_property
+    def hits(self) -> ArrayNx3[np.float32]:
+        """Apply missing hits mask to get the final array of hits"""
+        return self._hits[~self._missing_hits_mask]
+
+    @cached_property
+    def track_ids(self) -> ArrayN[np.int32]:
+        """Apply missing hits mask to get the final array of track ids"""
+        return self._track_ids[~self._missing_hits_mask]
+
+    @cached_property
+    def momentums(self) -> ArrayNx3[np.float32]:
+        """Apply missing hits mask to get the final array of momentums"""
+        return self._momentums[~self._missing_hits_mask]
+
+    @property
+    def fakes(self) -> ArrayNx3[np.float32]:
+        return self._fakes
+
+    @property
+    def missing_hits_mask(self) -> ArrayN[np.bool_]:
+        return self._missing_hits_mask
+
+    @property
+    def vertex(self) -> Vertex:
+        return self._vertex
+
+    @property
+    def track_params(self) -> Mapping[int, TrackParams]:
+        return self._track_params
 
     @cached_property
     def n_tracks(self) -> np.int32:
@@ -107,7 +178,7 @@ class SPDEventGenerator:
         track_params: TrackParams,
         vertex: Vertex,
         Rc: float
-    ) -> Tuple[float, float, float, float, float, float]:
+    ) -> Tuple[Point, Momentum]:
 
         R = track_params.pt / 0.29 / self.magnetic_field  # mm
         k0 = R / np.tan(track_params.theta)
@@ -148,7 +219,10 @@ class SPDEventGenerator:
         px, py = tangent[0], tangent[1]
 
         z = vertex.z + k0 * alpha
-        return (x, y, z, px, py, track_params.pz)
+        return (
+            Point(x, y, z),
+            Momentum(px, py, track_params.pz)
+        )
 
     def generate_track_hits(
         self,
@@ -169,31 +243,34 @@ class SPDEventGenerator:
         )
 
         for _, r in enumerate(radii):
-            x, y, z, px, py, pz = self.extrapolate_to_r(
+            point, momentum = self.extrapolate_to_r(
                 track_params=track_params,
                 vertex=vertex,
                 Rc=r,
             )
 
-            if (x, y, z) == (0, 0, 0):
+            if (point.x, point.y, point.z) == (0, 0, 0):
                 continue
 
-            if z >= 2386 or z <= -2386:
+            if point.z >= 2386 or point.z <= -2386:  # some magic number
                 continue
 
-            z = z + np.random.normal(0, 0.1)
-            phit = np.arctan2(x, y)
+            z = point.z + np.random.normal(0, 0.1)
+            phit = np.arctan2(point.x, point.y)
             delta = np.random.normal(0, 0.1)
-            x = x + delta * np.sin(phit)
-            y = y - delta * np.cos(phit)
+            x = point.x + delta * np.sin(phit)
+            y = point.y - delta * np.cos(phit)
+
+            # build hit
+            hit = Point(x, y, z)
 
             if np.random.uniform(0, 1) < detector_eff:
-                hits.append([x, y, z])
-                momentums.append([px, py, pz])
+                hits.append(hit.numpy)
+                momentums.append(momentum.numpy)
             else:
                 # add zeros for missing hit
-                hits.append([0, 0, 0])
-                momentums.append([0, 0, 0])
+                hits.append(Point(0, 0, 0).numpy)
+                momentums.append(Momentum(0, 0, 0).numpy)
 
         hits = np.asarray(hits, dtype=np.float32)
         momentums = np.asarray(momentums, dtype=np.float32)
@@ -202,8 +279,8 @@ class SPDEventGenerator:
     def generate_fakes(
         self,
         n_tracks: int,
-        radii: np.ndarray[Any, np.float32]
-    ) -> np.ndarray[(Any, 3), np.float32]:
+        radii: ArrayN[np.float32]
+    ) -> ArrayNx3[np.float32]:
         max_fakes = n_tracks**2 * len(radii)
         min_fakes = max_fakes / 2
 
@@ -274,9 +351,9 @@ class SPDEventGenerator:
 
         return Event(
             hits=hits,
+            track_ids=track_ids,
             momentums=momentums,
             fakes=fakes,
-            track_ids=track_ids,
             track_params=params,
             missing_hits_mask=missing_hits_mask,
             vertex=vertex,
@@ -286,6 +363,6 @@ class SPDEventGenerator:
 if __name__ == "__main__":
     event_gen = SPDEventGenerator()
 
-    for i in range(10):
+    for _ in range(10):
         event = event_gen.generate_spd_event()
         print(event)
