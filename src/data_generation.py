@@ -1,6 +1,21 @@
 import numpy as np
 import dataclasses as _dc
+from functools import cached_property
 from typing import Tuple, Optional, Any, Mapping
+
+
+@_dc.dataclass(frozen=True)
+class Vertex:
+    x: np.float32
+    y: np.float32
+    z: np.float32
+
+    @cached_property
+    def numpy(self):
+        return np.asarray([self.x, self.y, self.z], dtype=np.float32)
+
+    def __str__(self) -> str:
+        return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
 
 
 @_dc.dataclass(frozen=True)
@@ -9,7 +24,6 @@ class TrackParams:
     theta: np.float32
     pt: np.float32
     charge: np.int32  # -1 or 1
-    vz: np.float32
 
 
 @_dc.dataclass(frozen=True)
@@ -20,6 +34,7 @@ class Event:
     fakes: np.ndarray[(Any, 3), np.float32]  # fake hits
     track_ids: np.ndarray[Any, np.float32]
     missing_hits_mask: np.ndarray[Any, np.bool_]
+    vertex: Vertex  # vx, vy, vz
     # mapping from track_id to its params
     track_params: Mapping[int, TrackParams]
 
@@ -32,12 +47,15 @@ class Event:
             f"Fraction of fakes: {len(self.fakes) / (len(self.hits) + len(self.fakes)):.2f}\n"
             f"Fraction of missing hits: {np.sum(self.missing_hits_mask) / len(self.hits):.2f}\n"
             f"Number of unique tracks: {np.unique(self.track_ids).size}\n"
+            f"Vertex: {self.vertex}\n"
             "Track parameters:"
         )
         track_params_str = "\n".join([
-            (f"\tTrack ID: {tid}, Params: phi={p.phi:.2f}, "
-             f"theta={p.theta:.2f}, pt={p.pt:.2f}, charge={p.charge}, "
-             f"vz={p.vz:.2f}") for tid, p in self.track_params.items()
+            (
+                f"\tTrack ID: {tid}, Params: phi={p.phi:.2f}, "
+                f"theta={p.theta:.2f}, pt={p.pt:.2f}, charge={p.charge}"
+            )
+            for tid, p in self.track_params.items()
         ])
         return "\n".join([event_str, track_params_str, "\n"])
 
@@ -162,8 +180,7 @@ class SPDEventGenerator:
             phi=phi,
             theta=theta,
             pt=pt,
-            charge=charge,
-            vz=vz
+            charge=charge
         )
         return hits, momentums, track_params
 
@@ -246,7 +263,8 @@ class SPDEventGenerator:
             fakes=fakes,
             track_ids=track_ids,
             track_params=params,
-            missing_hits_mask=missing_hits_mask
+            missing_hits_mask=missing_hits_mask,
+            vertex=Vertex(x=vx, y=vy, z=vz)
         )
 
 
