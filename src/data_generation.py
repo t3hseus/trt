@@ -11,7 +11,11 @@ class Vertex:
     z: np.float32
 
     @cached_property
-    def numpy(self):
+    def r(self) -> np.float32:
+        return np.sqrt(self.x*self.x + self.y*self.y)
+
+    @cached_property
+    def numpy(self) -> np.ndarray[3, np.float32]:
         return np.asarray([self.x, self.y, self.z], dtype=np.float32)
 
     def __str__(self) -> str:
@@ -24,6 +28,18 @@ class TrackParams:
     theta: np.float32
     pt: np.float32
     charge: np.int32  # -1 or 1
+
+    @cached_property
+    def pz(self) -> np.float32:
+        return self.pt / np.tan(self.theta) * self.charge
+
+    @cached_property
+    def phit(self) -> np.float32:
+        return self.phi - np.pi / 2
+
+    def __str__(self) -> str:
+        return (f"TrackParams(phi={self.phi:.2f}, theta={self.theta:.2f}, "
+                f"pt={self.pt:.2f}, charge={self.charge})")
 
 
 @_dc.dataclass(frozen=True)
@@ -38,6 +54,10 @@ class Event:
     # mapping from track_id to its params
     track_params: Mapping[int, TrackParams]
 
+    @cached_property
+    def n_tracks(self) -> np.int32:
+        return np.unique(self.track_ids).size
+
     def __str__(self) -> str:
         event_str = (
             "Event:\n"
@@ -46,16 +66,13 @@ class Event:
             f"Shape of fake hits: {self.fakes.shape}\n"
             f"Fraction of fakes: {len(self.fakes) / (len(self.hits) + len(self.fakes)):.2f}\n"
             f"Fraction of missing hits: {np.sum(self.missing_hits_mask) / len(self.hits):.2f}\n"
-            f"Number of unique tracks: {np.unique(self.track_ids).size}\n"
+            f"Number of unique tracks: {self.n_tracks}\n"
             f"Vertex: {self.vertex}\n"
             "Track parameters:"
         )
         track_params_str = "\n".join([
-            (
-                f"\tTrack ID: {tid}, Params: phi={p.phi:.2f}, "
-                f"theta={p.theta:.2f}, pt={p.pt:.2f}, charge={p.charge}"
-            )
-            for tid, p in self.track_params.items()
+            f"\tTrack ID: {tid}, {params}"
+            for tid, params in self.track_params.items()
         ])
         return "\n".join([event_str, track_params_str, "\n"])
 
@@ -87,72 +104,76 @@ class SPDEventGenerator:
 
     def extrapolate_to_r(
         self,
-        pt: float,
-        charge: int,
-        theta: float,
-        phi: float,
-        z0: float,
+        track_params: TrackParams,
+        vertex: Vertex,
         Rc: float
     ) -> Tuple[float, float, float, float, float, float]:
-        # deg = 180 / np.pi
-        pz = pt / np.tan(theta) * charge
-        phit = phi - np.pi / 2
-        R = pt / 0.29 / self.magnetic_field  # mm
-        k0 = R / np.tan(theta)
-        x0 = R * np.cos(phit)
-        y0 = R * np.sin(phit)
 
-        if R < Rc / 2:  # no intersection
+        R = track_params.pt / 0.29 / self.magnetic_field  # mm
+        k0 = R / np.tan(track_params.theta)
+        x0 = vertex.x + R * np.cos(track_params.phit)
+        y0 = vertex.y + R * np.sin(track_params.phit)
+
+        Rtmp = Rc - vertex.r
+
+        if R < Rtmp / 2:  # no intersection
             return (0, 0, 0)
 
-        R = charge * R  # both polarities
-        alpha = 2 * np.arcsin(Rc / 2 / R)
+        R = track_params.charge * R  # both polarities
+        alpha = 2 * np.arcsin(Rtmp / 2 / R)
 
         if (alpha > np.pi):
             return (0, 0, 0)  # algorithm doesn't work for spinning tracks
 
-        extphi = phi - alpha / 2
+        extphi = track_params.phi - alpha / 2
         if extphi > (2 * np.pi):
             extphi = extphi - 2 * np.pi
 
         if extphi < 0:
             extphi = extphi + 2 * np.pi
 
-        x = Rc * np.cos(extphi)
-        y = Rc * np.sin(extphi)
+        x = vertex.x + Rtmp * np.cos(extphi)
+        y = vertex.y + Rtmp * np.sin(extphi)
 
-        radial = np.array([x - x0*charge, y - y0*charge], dtype=np.float32)
+        radial = np.array([
+            x - x0*track_params.charge,
+            y - y0*track_params.charge
+        ], dtype=np.float32)
 
         rotation_matrix = np.array([[0, -1], [1, 0]], dtype=np.float32)
         tangent = np.dot(rotation_matrix, radial)
 
         tangent /= np.sqrt(np.sum(np.square(tangent)))  # pt
-        tangent *= -pt * charge
+        tangent *= -track_params.pt * track_params.charge
         px, py = tangent[0], tangent[1]
 
-        z = z0 + k0 * alpha
-        return (x, y, z, px, py, pz)
+        z = vertex.z + k0 * alpha
+        return (x, y, z, px, py, track_params.pz)
 
     def generate_track_hits(
         self,
-        vx: float,
-        vy: float,
-        vz: float,
+        vertex: Vertex,
         radii: np.ndarray[Any, np.float32],
         detector_eff: Optional[float] = None
     ) -> Tuple[np.ndarray[(Any, 3), np.float32], np.ndarray[(Any, 3), np.float32], TrackParams]:
+
         if detector_eff is None:
             detector_eff = self.detector_eff
 
         hits, momentums = [], []
-        pt = np.random.uniform(100, 1000)  # MeV / c
-        phi = np.random.uniform(0, 2*np.pi)
-        theta = np.arccos(np.random.uniform(-1, 1))
-        charge = np.random.choice([-1, 1]).astype("int8")
+        track_params = TrackParams(
+            pt=np.random.uniform(100, 1000),  # MeV / c
+            phi=np.random.uniform(0, 2*np.pi),
+            theta=np.arccos(np.random.uniform(-1, 1)),
+            charge=np.random.choice([-1, 1]).astype("int8"),
+        )
 
         for _, r in enumerate(radii):
             x, y, z, px, py, pz = self.extrapolate_to_r(
-                pt, charge, theta, phi, vz, r)
+                track_params=track_params,
+                vertex=vertex,
+                Rc=r,
+            )
 
             if (x, y, z) == (0, 0, 0):
                 continue
@@ -176,12 +197,6 @@ class SPDEventGenerator:
 
         hits = np.asarray(hits, dtype=np.float32)
         momentums = np.asarray(momentums, dtype=np.float32)
-        track_params = TrackParams(
-            phi=phi,
-            theta=theta,
-            pt=pt,
-            charge=charge
-        )
         return hits, momentums, track_params
 
     def generate_fakes(
@@ -194,10 +209,10 @@ class SPDEventGenerator:
 
         n_fakes = np.random.randint(min_fakes, max_fakes)
         R = np.random.choice(radii, size=n_fakes)
-        Phi = np.random.uniform(0, 2*np.pi, size=n_fakes)
+        phi = np.random.uniform(0, 2*np.pi, size=n_fakes)
         Z = np.random.uniform(*self.z_coord_range, size=n_fakes)
-        X = R * np.cos(Phi)
-        Y = R * np.sin(Phi)
+        X = R * np.cos(phi)
+        Y = R * np.sin(phi)
 
         fakes = np.column_stack([X, Y, Z])
         return fakes
@@ -217,9 +232,11 @@ class SPDEventGenerator:
             self.r_coord_range[1],
             self.n_stations
         )  # mm
-        vx = np.random.normal(*self.vx_range)
-        vy = np.random.normal(*self.vy_range)
-        vz = np.random.uniform(*self.vz_range)
+        vertex = Vertex(
+            x=np.random.normal(*self.vx_range),
+            y=np.random.normal(*self.vy_range),
+            z=np.random.uniform(*self.vz_range),
+        )
         n_tracks = np.random.randint(1, self.max_event_tracks)
 
         hits = []
@@ -234,9 +251,7 @@ class SPDEventGenerator:
             # until the needed track will be generated
             while track_hits.size == 0:
                 track_hits, track_momentums, track_params = self.generate_track_hits(
-                    vx=vx,
-                    vy=vy,
-                    vz=vz,
+                    vertex=vertex,
                     radii=radii,
                     detector_eff=detector_eff
                 )
@@ -264,7 +279,7 @@ class SPDEventGenerator:
             track_ids=track_ids,
             track_params=params,
             missing_hits_mask=missing_hits_mask,
-            vertex=Vertex(x=vx, y=vy, z=vz)
+            vertex=vertex,
         )
 
 
