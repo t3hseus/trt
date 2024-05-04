@@ -1,8 +1,9 @@
 import numpy as np
 from enum import IntEnum
-from typing import Optional, Callable, Dict
+from typing import Optional, Dict
 from torch.utils.data import Dataset
 from .data_generation import SPDEventGenerator
+from .normalization import ConstraintsNormalizer, TrackParamsNormalizer
 
 
 class DatasetMode(IntEnum):
@@ -19,7 +20,8 @@ class SPDEventsDataset(Dataset):
         add_fakes: bool = True,
         shuffle: bool = True,
         detector_eff: float = 0.98,
-        hits_normalizer: Optional[Callable] = None,
+        hits_normalizer: Optional[ConstraintsNormalizer] = None,
+        track_params_normalizer: Optional[TrackParamsNormalizer] = None,
         fakes_label: int = -1,
         padding_label: int = -1,
         mode: DatasetMode = DatasetMode.train
@@ -35,6 +37,7 @@ class SPDEventsDataset(Dataset):
             add_fakes=add_fakes,
             detector_eff=detector_eff)
         self.hits_normalizer = hits_normalizer
+        self.track_params_normalizer = track_params_normalizer
         # get initial random seed for reproducibility
         # mode helps to ensure that datasets don't intersect
         self._initial_seed = np.random.get_state()[1][mode]
@@ -64,13 +67,31 @@ class SPDEventsDataset(Dataset):
         # charge -> categorical charge
         # charge=-1 -> (1  0) charge=1 -> (0  1);
         # theta -> theta raw, i.e. before arccos
-        params = np.zeros((self._max_event_tracks, 7), dtype=np.float32)
+        if self.track_params_normalizer:
+            # charge -> categorical feature
+            # charge=`-1` -> `(1,  0)` charge=`1` -> `(0, 1)`;
+            params_shape = (self._max_event_tracks, 8)
+        else:
+            params_shape = (self._max_event_tracks, 7)
 
+        params = np.zeros(params_shape, dtype=np.float32)
         param_labels = np.full(self._max_event_tracks,
                                self._padding_label, dtype=np.int32)
         for i, (track_id, track_params) in enumerate(event.track_params.items()):
-            params[i][:3] = event.vertex.numpy
-            params[i][3:] = track_params.numpy
+            # normalize track parameters if needed
+            if self.track_params_normalizer:
+                params[i] = self.track_params_normalizer.normalize(
+                    vx=event.vertex.x,
+                    vy=event.vertex.y,
+                    vz=event.vertex.z,
+                    pt=track_params.pt,
+                    phi=track_params.phi,
+                    theta=track_params.theta,
+                    charge=track_params.charge
+                )
+            else:
+                params[i][:3] = event.vertex.numpy
+                params[i][3:] = track_params.numpy
             param_labels[i] = track_id
 
         # shuffle data before output
@@ -82,6 +103,10 @@ class SPDEventsDataset(Dataset):
             shuffle_idx = np.random.permutation(event.n_tracks)
             params[:event.n_tracks] = params[shuffle_idx]
             param_labels[:event.n_tracks] = param_labels[shuffle_idx]
+
+        # data normalization
+        if self.hits_normalizer:
+            hits = self.hits_normalizer(hits)
 
         return {
             "hits": hits,

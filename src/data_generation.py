@@ -4,12 +4,13 @@ import dataclasses as _dc
 from functools import cached_property
 from typing import Tuple, Optional, Any, Mapping
 from typing import Annotated, Literal, TypeVar
+from .constants import OZ_RANGE
 
 
 DType = TypeVar("DType", bound=np.generic)
 TParamsArr = Annotated[
     npt.NDArray[DType],
-    Literal["phi", "theta", "pt", "charge"]
+    Literal["pt", "phi", "theta", "charge"]
 ]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
@@ -42,6 +43,7 @@ class Point:
 
     @cached_property
     def numpy(self) -> Array3[np.float32]:
+        """Returns numpy array with values (x, y, z)"""
         return np.asarray([self.x, self.y, self.z], dtype=np.float32)
 
     def __str__(self) -> str:
@@ -72,11 +74,12 @@ class TrackParams:
 
     @cached_property
     def numpy(self) -> TParamsArr[np.float32]:
-        return np.asarray([self.phi, self.theta, self.pt, self.charge], dtype=np.float32)
+        """Returns numpy array with parameters - (pt, phi, theta, charge)"""
+        return np.asarray([self.pt, self.phi, self.theta, self.charge], dtype=np.float32)
 
     def __str__(self) -> str:
-        return (f"TrackParams(phi={self.phi:.2f}, theta={self.theta:.2f}, "
-                f"pt={self.pt:.2f}, charge={self.charge})")
+        return (f"TrackParams(pt={self.pt:.2f}, phi={self.phi:.2f}, "
+                f"theta={self.theta:.2f}, charge={self.charge})")
 
 
 class Event:
@@ -166,7 +169,7 @@ class SPDEventGenerator:
         vx_range: Tuple[float, float] = (0.0, 10.0),
         vy_range: Tuple[float, float] = (0.0, 10.0),
         vz_range: Tuple[float, float] = (-300.0, 300.),
-        z_coord_range: Tuple[float, float] = (-2386.0, 2386.0),
+        z_coord_range: Tuple[float, float] = OZ_RANGE,
         r_coord_range: Tuple[float, float] = (270, 850),
         magnetic_field: float = 0.8  # magnetic field [T]
     ):
@@ -260,7 +263,7 @@ class SPDEventGenerator:
             if (point.x, point.y, point.z) == (0, 0, 0):
                 continue
 
-            if point.z >= 2386 or point.z <= -2386:  # some magic number
+            if not self.z_coord_range[0] <= point.z <= self.z_coord_range[1]:
                 continue
 
             z = point.z + np.random.normal(0, 0.1)
