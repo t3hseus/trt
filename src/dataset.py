@@ -1,9 +1,12 @@
 import numpy as np
 from enum import IntEnum
-from typing import Optional, Dict
+from typing import List, Optional, Dict, TypedDict, Union
+import torch
 from torch.utils.data import Dataset
-from .data_generation import SPDEventGenerator
-from .normalization import ConstraintsNormalizer, TrackParamsNormalizer
+from .data_generation import SPDEventGenerator, ArrayNx3, ArrayN
+from .normalization import (
+    ConstraintsNormalizer, TrackParamsNormalizer, TParamsArr, NormTParamsArr
+)
 
 
 class DatasetMode(IntEnum):
@@ -12,6 +15,21 @@ class DatasetMode(IntEnum):
     test = 2
 
 
+class DatasetSample(TypedDict):
+    hits: ArrayNx3[np.float32]
+    hit_labels: ArrayN[np.int32]
+    params: Union[TParamsArr, NormTParamsArr]
+    param_labels: ArrayN[np.int32]
+    mask: ArrayN[np.float32]
+
+
+class BatchSample(TypedDict):
+    inputs: torch.FloatTensor
+    mask: torch.FloatTensor
+    targets: torch.FloatTensor
+
+
+# TODO: add truncation
 class SPDEventsDataset(Dataset):
     def __init__(
         self,
@@ -45,7 +63,7 @@ class SPDEventsDataset(Dataset):
     def __len__(self) -> int:
         return self._n_samples
 
-    def __getitem__(self, idx: int) -> Dict[str, np.ndarray]:
+    def __getitem__(self, idx: int) -> DatasetSample:
         # prevent dataset from generation of new samples each epoch
         np.random.seed(self._initial_seed + idx)
         # generate sample
@@ -108,10 +126,32 @@ class SPDEventsDataset(Dataset):
         if self.hits_normalizer:
             hits = self.hits_normalizer(hits)
 
-        return {
-            "hits": hits,
-            "hit_labels": hit_labels,
-            "params": params,
-            "param_labels": param_labels,
-            "mask": np.ones(len(hits), dtype=np.int32)
-        }
+        return DatasetSample(
+            hits=hits,
+            hit_labels=hit_labels,
+            params=params,
+            param_labels=param_labels,
+            mask=np.ones(len(hits), dtype=np.float32)
+        )
+
+
+def collate_fn(samples: List[DatasetSample]) -> BatchSample:
+    maxlen = max([len(sample["hits"]) for sample in samples])
+    batch_size = len(samples)
+    n_features = samples[0]["hits"].shape[-1]
+
+    batch_inputs = np.zeros((batch_size, maxlen, n_features), dtype=np.float32)
+    batch_mask = np.zeros((batch_size, maxlen), dtype=np.float32)
+    # params have the fixed size - MAX_TRACKS x N_PARAMS
+    batch_targets = np.zeros((batch_size, *samples[0]["params"].shape))
+
+    for i, sample in enumerate(samples):
+        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
+        batch_mask[i, :len(sample["hits"])] = sample["mask"]
+        batch_targets[i] = sample["params"]
+
+    return BatchSample(
+        inputs=torch.from_numpy(batch_inputs),
+        mask=torch.from_numpy(batch_mask),
+        targets=torch.from_numpy(batch_targets)
+    )
