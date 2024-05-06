@@ -22,3 +22,13 @@ If you are using VSCode, you can select the newly installed venv with the help o
 2. Type `Python: Select Interpreter`
 3. Choose the option with `.venv/bin/python` path
 
+### Model training
+```bash
+make train CUDA_VISIBLE_DEVICES=DEVICE_ID
+```
+
+To check Tensorboard logs:
+```bash
+tensorboard --logdir experiment_logs
+```
+

@@ -1,6 +1,7 @@
 # Execution options
 .SILENT:
 
+CUDA_VISIBLE_DEVICES = 
 PYTHON_VERSION = 3.9
 VENV := .venv
 REQPATH := requirements.txt
@@ -17,3 +18,8 @@ ${VENV}:
 .PHONY: venv
 venv: ${VENV}
 	${VENV}/bin/pip install -r ${REQPATH}
+
+
+.PHONY: train
+train:
+	CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python train.py --config "configs/train.cfg"

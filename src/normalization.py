@@ -1,3 +1,4 @@
+import gin
 import numpy as np
 import numpy.typing as npt
 from typing import Tuple, Union
@@ -13,6 +14,7 @@ TParamsArr = Annotated[npt.NDArray[DType], Literal[7]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
 
 
+@gin.configurable
 class ConstraintsNormalizer:
     """ MinMax scaler in range from -1 to 1
     for each coordinate
@@ -48,6 +50,7 @@ class ConstraintsNormalizer:
         return norm_inputs
 
 
+@gin.configurable
 class TrackParamsNormalizer:
     """Prepares track params vector to be fed to NN loss function by
     normalizing them from 0 to 1 and converting binary parameter
