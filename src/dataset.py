@@ -29,7 +29,6 @@ class BatchSample(TypedDict):
     targets: torch.FloatTensor
 
 
-# TODO: add truncation
 class SPDEventsDataset(Dataset):
     def __init__(
         self,
@@ -40,6 +39,7 @@ class SPDEventsDataset(Dataset):
         detector_eff: float = 0.98,
         hits_normalizer: Optional[ConstraintsNormalizer] = None,
         track_params_normalizer: Optional[TrackParamsNormalizer] = None,
+        truncation_length: Optional[int] = None,
         fakes_label: int = -1,
         padding_label: int = -1,
         mode: DatasetMode = DatasetMode.train
@@ -50,6 +50,12 @@ class SPDEventsDataset(Dataset):
         self._fakes_label = fakes_label
         self._padding_label = padding_label
         self._shuffle = shuffle
+
+        if truncation_length is not None and truncation_length > 0:
+            self.truncation_length = truncation_length
+        else:
+            self.truncation_length = None
+
         self.spd_gen = SPDEventGenerator(
             max_event_tracks=max_event_tracks,
             add_fakes=add_fakes,
@@ -125,6 +131,11 @@ class SPDEventsDataset(Dataset):
         # data normalization
         if self.hits_normalizer:
             hits = self.hits_normalizer(hits)
+
+        if self.truncation_length is not None:
+            # truncate inputs
+            hits = hits[:self.truncation_length]
+            hit_labels = hit_labels[:self.truncation_length]
 
         return DatasetSample(
             hits=hits,
