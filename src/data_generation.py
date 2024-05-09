@@ -184,14 +184,16 @@ class SPDEventGenerator:
         self.r_coord_range = r_coord_range
         self.magnetic_field = magnetic_field
 
-    def extrapolate_to_r(
-        self,
+    @staticmethod
+    def generate_hit_by_params(
         track_params: TrackParams,
         vertex: Vertex,
-        Rc: float
+        Rc: float,
+        magnetic_field: float = 0.8,
     ) -> Tuple[Point, Momentum]:
+        """Generates a single hit with its momentum by params"""
 
-        R = track_params.pt / 0.29 / self.magnetic_field  # mm
+        R = track_params.pt / 0.29 / magnetic_field  # mm
         k0 = R / np.tan(track_params.theta)
         x0 = vertex.x + R * np.cos(track_params.phit)
         y0 = vertex.y + R * np.sin(track_params.phit)
@@ -230,6 +232,7 @@ class SPDEventGenerator:
         px, py = tangent[0], tangent[1]
 
         z = vertex.z + k0 * alpha
+
         return (
             Point(x, y, z),
             Momentum(px, py, track_params.pz)
@@ -240,7 +243,8 @@ class SPDEventGenerator:
         vertex: Vertex,
         radii: np.ndarray[Any, np.float32],
         detector_eff: Optional[float] = None
-    ) -> Tuple[np.ndarray[(Any, 3), np.float32], np.ndarray[(Any, 3), np.float32], TrackParams]:
+    ) -> Tuple[ArrayNx3[np.float32], ArrayNx3[np.float32], TrackParams]:
+        """Generates (hits, momentums, parameters) for a single track"""
 
         if detector_eff is None:
             detector_eff = self.detector_eff
@@ -254,10 +258,11 @@ class SPDEventGenerator:
         )
 
         for _, r in enumerate(radii):
-            point, momentum = self.extrapolate_to_r(
+            point, momentum = self.generate_hit_by_params(
                 track_params=track_params,
                 vertex=vertex,
                 Rc=r,
+                magnetic_field=self.magnetic_field
             )
 
             if (point.x, point.y, point.z) == (0, 0, 0):
@@ -266,11 +271,12 @@ class SPDEventGenerator:
             if not self.z_coord_range[0] <= point.z <= self.z_coord_range[1]:
                 continue
 
-            z = point.z + np.random.normal(0, 0.1)
-            phit = np.arctan2(point.x, point.y)
+            # add small noise for coordinates
             delta = np.random.normal(0, 0.1)
+            phit = np.arctan2(point.x, point.y)
             x = point.x + delta * np.sin(phit)
             y = point.y - delta * np.cos(phit)
+            z = point.z + delta
 
             # build hit
             hit = Point(x, y, z)

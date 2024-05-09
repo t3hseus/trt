@@ -1,16 +1,16 @@
 import numpy as np
 import plotly.graph_objects as go
 from plotly.express.colors import sample_colorscale
-from typing import Tuple
+from typing import Tuple, Optional
 from .data_generation import ArrayNx3, ArrayN, Array3
 from .constants import OX_RANGE, OY_RANGE, OZ_RANGE
 
 
 def draw_event(
     hits: ArrayNx3[np.float32],
-    fakes: ArrayNx3[np.float32],
     vertex: Array3[np.float32],
     labels: ArrayN[np.int32],
+    fakes: Optional[ArrayNx3[np.float32]] = None,
     x_coord_range: Tuple[float, float] = OX_RANGE,
     y_coord_range: Tuple[float, float] = OY_RANGE,
     z_coord_range: Tuple[float, float] = OZ_RANGE,
@@ -49,18 +49,19 @@ def draw_event(
     ))
 
     # draw fakes
-    fig.add_trace(go.Scatter3d(
-        x=fakes[:, 0],
-        y=fakes[:, 1],
-        z=fakes[:, 2],
-        marker=dict(
-            size=1,
-            color="gray",
-        ),
-        opacity=0.35,
-        mode="markers",
-        name="Fakes",
-    ))
+    if fakes is not None:
+        fig.add_trace(go.Scatter3d(
+            x=fakes[:, 0],
+            y=fakes[:, 1],
+            z=fakes[:, 2],
+            marker=dict(
+                size=1,
+                color="gray",
+            ),
+            opacity=0.35,
+            mode="markers",
+            name="Fakes",
+        ))
 
     fig.update_layout(
         margin=dict(
