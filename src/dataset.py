@@ -1,12 +1,13 @@
-import numpy as np
 from enum import IntEnum
-from typing import List, Optional, Dict, TypedDict, Union
+from typing import Dict, List, Optional, TypedDict, Union
+
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-from .data_generation import SPDEventGenerator, ArrayNx3, ArrayN
-from .normalization import (
-    ConstraintsNormalizer, TrackParamsNormalizer, TParamsArr, NormTParamsArr
-)
+
+from .data_generation import ArrayN, ArrayNx3, SPDEventGenerator
+from .normalization import (ConstraintsNormalizer, NormTParamsArr, TParamsArr,
+                            TrackParamsNormalizer)
 
 
 class DatasetMode(IntEnum):
@@ -21,12 +22,14 @@ class DatasetSample(TypedDict):
     params: Union[TParamsArr, NormTParamsArr]
     param_labels: ArrayN[np.int32]
     mask: ArrayN[np.float32]
+    orig_params: Union[TParamsArr, NormTParamsArr]
 
 
 class BatchSample(TypedDict):
     inputs: torch.FloatTensor
     mask: torch.FloatTensor
     targets: torch.FloatTensor
+    orig_params: torch.FloatTensor
 
 
 class SPDEventsDataset(Dataset):
@@ -42,7 +45,7 @@ class SPDEventsDataset(Dataset):
         truncation_length: Optional[int] = None,
         fakes_label: int = -1,
         padding_label: int = -1,
-        mode: DatasetMode = DatasetMode.train
+        mode: DatasetMode = DatasetMode.train,
     ):
         self._n_samples = n_samples
         self._max_event_tracks = max_event_tracks
@@ -59,7 +62,8 @@ class SPDEventsDataset(Dataset):
         self.spd_gen = SPDEventGenerator(
             max_event_tracks=max_event_tracks,
             add_fakes=add_fakes,
-            detector_eff=detector_eff)
+            detector_eff=detector_eff,
+        )
         self.hits_normalizer = hits_normalizer
         self.track_params_normalizer = track_params_normalizer
         # get initial random seed for reproducibility
@@ -80,7 +84,8 @@ class SPDEventsDataset(Dataset):
             hits = np.vstack([event.hits, event.fakes])
             hit_labels = np.hstack(
                 # -1 - label for fakes
-                [event.track_ids, np.full(len(event.fakes), self._fakes_label)])
+                [event.track_ids, np.full(len(event.fakes), self._fakes_label)]
+            )
         else:
             hits = event.hits
             hit_labels = event.track_ids
@@ -91,16 +96,13 @@ class SPDEventsDataset(Dataset):
         # charge -> categorical charge
         # charge=-1 -> (1  0) charge=1 -> (0  1);
         # theta -> theta raw, i.e. before arccos
-        if self.track_params_normalizer:
-            # charge -> categorical feature
-            # charge=`-1` -> `(1,  0)` charge=`1` -> `(0, 1)`;
-            params_shape = (self._max_event_tracks, 8)
-        else:
-            params_shape = (self._max_event_tracks, 7)
+        params_shape = (self._max_event_tracks, 7)
 
         params = np.zeros(params_shape, dtype=np.float32)
-        param_labels = np.full(self._max_event_tracks,
-                               self._padding_label, dtype=np.int32)
+        orig_params = np.zeros(params_shape, dtype=np.float32)
+        param_labels = np.full(
+            self._max_event_tracks, self._padding_label, dtype=np.int32
+        )
         for i, (track_id, track_params) in enumerate(event.track_params.items()):
             # normalize track parameters if needed
             if self.track_params_normalizer:
@@ -111,11 +113,15 @@ class SPDEventsDataset(Dataset):
                     pt=track_params.pt,
                     phi=track_params.phi,
                     theta=track_params.theta,
-                    charge=track_params.charge
+                    charge=track_params.charge,
+                )
+                orig_params[i] = self.track_params_normalizer.denormalize(
+                    params[i], is_charge_categorical=True
                 )
             else:
                 params[i][:3] = event.vertex.numpy
                 params[i][3:] = track_params.numpy
+                orig_params[i] = params[i]
             param_labels[i] = track_id
 
         # shuffle data before output
@@ -125,8 +131,9 @@ class SPDEventsDataset(Dataset):
             hit_labels = hit_labels[shuffle_idx]
             # shuffle params without shuffling padding
             shuffle_idx = np.random.permutation(event.n_tracks)
-            params[:event.n_tracks] = params[shuffle_idx]
-            param_labels[:event.n_tracks] = param_labels[shuffle_idx]
+            params[: event.n_tracks] = params[shuffle_idx]
+            orig_params[: event.n_tracks] = orig_params[shuffle_idx]
+            param_labels[: event.n_tracks] = param_labels[shuffle_idx]
 
         # data normalization
         if self.hits_normalizer:
@@ -134,15 +141,16 @@ class SPDEventsDataset(Dataset):
 
         if self.truncation_length is not None:
             # truncate inputs
-            hits = hits[:self.truncation_length]
-            hit_labels = hit_labels[:self.truncation_length]
+            hits = hits[: self.truncation_length]
+            hit_labels = hit_labels[: self.truncation_length]
 
         return DatasetSample(
             hits=hits,
             hit_labels=hit_labels,
             params=params,
+            orig_params=orig_params,
             param_labels=param_labels,
-            mask=np.ones(len(hits), dtype=np.float32)
+            mask=np.ones(len(hits), dtype=bool),
         )
 
 
@@ -152,17 +160,20 @@ def collate_fn(samples: List[DatasetSample]) -> BatchSample:
     n_features = samples[0]["hits"].shape[-1]
 
     batch_inputs = np.zeros((batch_size, maxlen, n_features), dtype=np.float32)
-    batch_mask = np.zeros((batch_size, maxlen), dtype=np.float32)
+    batch_mask = np.zeros((batch_size, maxlen), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     batch_targets = np.zeros((batch_size, *samples[0]["params"].shape))
+    batch_orig_params = np.zeros((batch_size, *samples[0]["orig_params"].shape))
 
     for i, sample in enumerate(samples):
-        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
-        batch_mask[i, :len(sample["hits"])] = sample["mask"]
+        batch_inputs[i, : len(sample["hits"])] = sample["hits"]
+        batch_mask[i, : len(sample["hits"])] = sample["mask"]
         batch_targets[i] = sample["params"]
+        batch_orig_params[i] = sample["orig_params"]
 
     return BatchSample(
         inputs=torch.from_numpy(batch_inputs),
         mask=torch.from_numpy(batch_mask),
-        targets=torch.from_numpy(batch_targets)
+        targets=torch.from_numpy(batch_targets),
+        orig_params=torch.from_numpy(batch_orig_params),
     )

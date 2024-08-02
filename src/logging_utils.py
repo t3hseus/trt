@@ -7,8 +7,7 @@ def setup_logger(logger, logger_dir, stage="train"):
     fh = logging.FileHandler(f"{logger_dir}/{stage}.log")
 
     # create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     # add formatter to ch
     fh.setFormatter(formatter)

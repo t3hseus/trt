@@ -1,20 +1,23 @@
-import numpy as np
-import numpy.typing as npt
 import dataclasses as _dc
 from functools import cached_property
-from typing import Tuple, Optional, Any, Mapping
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, Any, Literal, Mapping, Optional, Tuple, TypeVar
+
+import numpy as np
+import numpy.typing as npt
+import torch
+
 from .constants import OZ_RANGE
 
-
 DType = TypeVar("DType", bound=np.generic)
-TParamsArr = Annotated[
-    npt.NDArray[DType],
-    Literal["pt", "phi", "theta", "charge"]
-]
+TParamsArr = Annotated[npt.NDArray[DType], Literal["pt", "phi", "theta", "charge"]]
+TorchTParamsArr = Annotated[torch.FloatTensor, Literal["pt", "phi", "theta", "charge"]]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
+
+TArray3 = Annotated[torch.FloatTensor, Literal[3]]
+TArrayN = Annotated[torch.FloatTensor, Literal["N"]]
+TArrayNx3 = Annotated[torch.FloatTensor, Literal["N", 3]]
 
 
 @_dc.dataclass(frozen=True)
@@ -26,6 +29,10 @@ class Momentum:
     @cached_property
     def numpy(self) -> Array3[np.float32]:
         return np.asarray([self.px, self.py, self.pz], dtype=np.float32)
+
+    @cached_property
+    def torch(self) -> TArray3:
+        return torch.FloatTensor([self.px, self.py, self.pz])
 
     def __str__(self) -> str:
         return f"Momentum(px={self.px:.2f}, py={self.py:.2f}, pz={self.pz:.2f})"
@@ -39,12 +46,17 @@ class Point:
 
     @cached_property
     def r(self) -> np.float32:
-        return np.sqrt(self.x*self.x + self.y*self.y)
+        return np.sqrt(self.x * self.x + self.y * self.y)
 
     @cached_property
     def numpy(self) -> Array3[np.float32]:
         """Returns numpy array with values (x, y, z)"""
         return np.asarray([self.x, self.y, self.z], dtype=np.float32)
+
+    @cached_property
+    def torch(self) -> TArray3:
+        """Returns numpy array with values (x, y, z)"""
+        return torch.FloatTensor([self.x, self.y, self.z])
 
     def __str__(self) -> str:
         return f"Point(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
@@ -52,7 +64,6 @@ class Point:
 
 @_dc.dataclass(frozen=True)
 class Vertex(Point):
-
     def __str__(self) -> str:
         return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
 
@@ -75,25 +86,34 @@ class TrackParams:
     @cached_property
     def numpy(self) -> TParamsArr[np.float32]:
         """Returns numpy array with parameters - (pt, phi, theta, charge)"""
-        return np.asarray([self.pt, self.phi, self.theta, self.charge], dtype=np.float32)
+        return np.asarray(
+            [self.pt, self.phi, self.theta, self.charge], dtype=np.float32
+        )
+
+    @cached_property
+    def torch(self) -> TorchTParamsArr:
+        """Returns numpy array with parameters - (pt, phi, theta, charge)"""
+        return torch.FloatTensor([self.pt, self.phi, self.theta, self.charge])
 
     def __str__(self) -> str:
-        return (f"TrackParams(pt={self.pt:.2f}, phi={self.phi:.2f}, "
-                f"theta={self.theta:.2f}, charge={self.charge})")
+        return (
+            f"TrackParams(pt={self.pt:.2f}, phi={self.phi:.2f}, "
+            f"theta={self.theta:.2f}, charge={self.charge})"
+        )
 
 
 class Event:
     """Single generated event"""
 
     def __init__(
-            self,
-            hits: ArrayNx3[np.float32],
-            track_ids: ArrayN[np.int32],
-            momentums: ArrayNx3[np.float32],
-            fakes: ArrayNx3[np.float32],
-            missing_hits_mask: ArrayN[np.bool_],
-            vertex: Vertex,
-            track_params: Mapping[int, TrackParams]
+        self,
+        hits: ArrayNx3[np.float32],
+        track_ids: ArrayN[np.int32],
+        momentums: ArrayNx3[np.float32],
+        fakes: ArrayNx3[np.float32],
+        missing_hits_mask: ArrayN[np.bool_],
+        vertex: Vertex,
+        track_params: Mapping[int, TrackParams],
     ) -> None:
         # original values before applying missing_hits_mask
         self._hits = hits
@@ -152,10 +172,12 @@ class Event:
             f"Vertex: {self.vertex}\n"
             "Track parameters:"
         )
-        track_params_str = "\n".join([
-            f"\tTrack ID: {tid}, {params}"
-            for tid, params in self.track_params.items()
-        ])
+        track_params_str = "\n".join(
+            [
+                f"\tTrack ID: {tid}, {params}"
+                for tid, params in self.track_params.items()
+            ]
+        )
         return "\n".join([event_str, track_params_str, "\n"])
 
 
@@ -168,10 +190,10 @@ class SPDEventGenerator:
         n_stations: int = 35,
         vx_range: Tuple[float, float] = (0.0, 10.0),
         vy_range: Tuple[float, float] = (0.0, 10.0),
-        vz_range: Tuple[float, float] = (-300.0, 300.),
+        vz_range: Tuple[float, float] = (-300.0, 300.0),
         z_coord_range: Tuple[float, float] = OZ_RANGE,
         r_coord_range: Tuple[float, float] = (270, 850),
-        magnetic_field: float = 0.8  # magnetic field [T]
+        magnetic_field: float = 0.8,  # magnetic field [T]
     ):
         self.max_event_tracks = max_event_tracks
         self.detector_eff = detector_eff
@@ -206,7 +228,7 @@ class SPDEventGenerator:
         R = track_params.charge * R  # both polarities
         alpha = 2 * np.arcsin(Rtmp / 2 / R)
 
-        if (alpha > np.pi):
+        if alpha > np.pi:
             return (0, 0, 0)  # algorithm doesn't work for spinning tracks
 
         extphi = track_params.phi - alpha / 2
@@ -219,10 +241,10 @@ class SPDEventGenerator:
         x = vertex.x + Rtmp * np.cos(extphi)
         y = vertex.y + Rtmp * np.sin(extphi)
 
-        radial = np.array([
-            x - x0*track_params.charge,
-            y - y0*track_params.charge
-        ], dtype=np.float32)
+        radial = np.array(
+            [x - x0 * track_params.charge, y - y0 * track_params.charge],
+            dtype=np.float32,
+        )
 
         rotation_matrix = np.array([[0, -1], [1, 0]], dtype=np.float32)
         tangent = np.dot(rotation_matrix, radial)
@@ -233,16 +255,13 @@ class SPDEventGenerator:
 
         z = vertex.z + k0 * alpha
 
-        return (
-            Point(x, y, z),
-            Momentum(px, py, track_params.pz)
-        )
+        return (Point(x, y, z), Momentum(px, py, track_params.pz))
 
     def generate_track_hits(
         self,
         vertex: Vertex,
         radii: np.ndarray[Any, np.float32],
-        detector_eff: Optional[float] = None
+        detector_eff: Optional[float] = None,
     ) -> Tuple[ArrayNx3[np.float32], ArrayNx3[np.float32], TrackParams]:
         """Generates (hits, momentums, parameters) for a single track"""
 
@@ -252,7 +271,7 @@ class SPDEventGenerator:
         hits, momentums = [], []
         track_params = TrackParams(
             pt=np.random.uniform(100, 1000),  # MeV / c
-            phi=np.random.uniform(0, 2*np.pi),
+            phi=np.random.uniform(0, 2 * np.pi),
             theta=np.arccos(np.random.uniform(-1, 1)),
             charge=np.random.choice([-1, 1]).astype("int8"),
         )
@@ -262,7 +281,7 @@ class SPDEventGenerator:
                 track_params=track_params,
                 vertex=vertex,
                 Rc=r,
-                magnetic_field=self.magnetic_field
+                magnetic_field=self.magnetic_field,
             )
 
             if (point.x, point.y, point.z) == (0, 0, 0):
@@ -294,16 +313,14 @@ class SPDEventGenerator:
         return hits, momentums, track_params
 
     def generate_fakes(
-        self,
-        n_tracks: int,
-        radii: ArrayN[np.float32]
+        self, n_tracks: int, radii: ArrayN[np.float32]
     ) -> ArrayNx3[np.float32]:
         max_fakes = n_tracks**2 * len(radii)
         min_fakes = max_fakes / 2
 
         n_fakes = np.random.randint(min_fakes, max_fakes)
         R = np.random.choice(radii, size=n_fakes)
-        phi = np.random.uniform(0, 2*np.pi, size=n_fakes)
+        phi = np.random.uniform(0, 2 * np.pi, size=n_fakes)
         Z = np.random.uniform(*self.z_coord_range, size=n_fakes)
         X = R * np.cos(phi)
         Y = R * np.sin(phi)
@@ -322,16 +339,14 @@ class SPDEventGenerator:
             add_fakes = self.add_fakes
 
         radii = np.linspace(
-            self.r_coord_range[0],
-            self.r_coord_range[1],
-            self.n_stations
+            self.r_coord_range[0], self.r_coord_range[1], self.n_stations
         )  # mm
         vertex = Vertex(
             x=np.random.normal(*self.vx_range),
             y=np.random.normal(*self.vy_range),
             z=np.random.uniform(*self.vz_range),
         )
-        n_tracks = np.random.randint(1, self.max_event_tracks)
+        n_tracks = self.max_event_tracks  # np.random.randint(1, self.max_event_tracks)
 
         hits = []
         momentums = []
@@ -345,9 +360,7 @@ class SPDEventGenerator:
             # until the needed track will be generated
             while track_hits.size == 0:
                 track_hits, track_momentums, track_params = self.generate_track_hits(
-                    vertex=vertex,
-                    radii=radii,
-                    detector_eff=detector_eff
+                    vertex=vertex, radii=radii, detector_eff=detector_eff
                 )
             # add to the global list of hits
             hits.append(track_hits)
@@ -361,10 +374,7 @@ class SPDEventGenerator:
         track_ids = np.concatenate(track_ids)
 
         if add_fakes:
-            fakes = self.generate_fakes(
-                n_tracks=n_tracks,
-                radii=radii
-            )
+            fakes = self.generate_fakes(n_tracks=n_tracks, radii=radii)
 
         return Event(
             hits=hits,
