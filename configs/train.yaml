@@ -1,0 +1,78 @@
+defaults:
+  - model: base
+  - criterion: naive
+  - user_settings: user_settings
+  - dataset: base
+
+project_path: ${user_settings.project_path}
+datasets_root: ${user_settings.datasets_root}
+results_dir: ${user_settings.hydra_dir}
+hydra_root: ${user_settings.hydra_root}
+hydra_dir: ${user_settings.hydra_dir}
+hydra:
+  run:
+    dir: ${hydra_dir}
+  sweep:
+    dir: ${hydra_dir}/multirun
+    subdir: ${hydra.job.num}
+
+
+num_epochs: 2000
+train_batch_size: 16
+val_batch_size: 16
+random_seed: 42
+logging_dir: ${hydra_dir}
+resume_from_checkpoint: r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
+num_workers: 0
+pin_memory: False
+
+metrics:
+  - _target_: src.loss.MatchingLoss
+    _recursive_: True
+    matcher:
+      _target_: src.loss.HungarianMatcher
+      class_cost: 1.
+      params_cost: 1.
+    hits_generator:
+      _target_: src.postprocess.TracksFromParamsGenerator
+      params_normalizer: ${dataset.track_params_normalizer}
+      hits_normalizer: ${dataset.hits_normalizer}
+      n_stations: 35
+    num_classes: 1
+    eos_coef: 0.2
+    losses: ["labels"]
+
+  - _target_: src.loss.MatchingLoss
+    _recursive_: True
+    matcher:
+      _target_: src.loss.HungarianMatcher
+      class_cost: 1.
+      params_cost: 1.
+    hits_generator:
+      _target_: src.postprocess.TracksFromParamsGenerator
+      params_normalizer: ${dataset.track_params_normalizer}
+      hits_normalizer: ${dataset.hits_normalizer}
+      n_stations: 35
+    num_classes: 1
+    eos_coef: 0.2
+    losses: [ "params" ]
+
+  - _target_: src.loss.MatchingLoss
+    _recursive_: True
+    matcher:
+      _target_: src.loss.HungarianMatcher
+      class_cost: 1.
+      params_cost: 1.
+    hits_generator:
+      _target_: src.postprocess.TracksFromParamsGenerator
+      params_normalizer: ${dataset.track_params_normalizer}
+      hits_normalizer: ${dataset.hits_normalizer}
+      n_stations: 35
+    num_classes: 1
+    eos_coef: 0.2
+    losses: [ "hits" ]
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0003
+  weight_decay: 0.0  # 00001

@@ -1,0 +1,4 @@
+project_path: D:\projects\trt
+results_dir: ${user_settings.project_path}/results
+hydra_root: ${user_settings.results_dir}/hydra
+hydra_dir: ${user_settings.hydra_root}/${now:%Y-%m-%d}/${now:%H-%M-%S}

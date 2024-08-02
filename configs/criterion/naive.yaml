@@ -1,0 +1,14 @@
+_target_: src.loss.MatchingLoss
+_recursive_: True
+matcher:
+  _target_: src.loss.HungarianMatcher
+  class_cost: 0.5
+  params_cost: 2.
+hits_generator:
+  _target_: src.postprocess.TracksFromParamsGenerator
+  params_normalizer: ${dataset.track_params_normalizer}
+  hits_normalizer: ${dataset.hits_normalizer}
+  n_stations: 35
+num_classes: 1
+eos_coef: 0.2
+losses: ["labels", "params", "hits"]

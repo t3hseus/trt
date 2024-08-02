@@ -1,0 +1,9 @@
+train_samples: 20000
+val_samples: 500
+max_event_tracks: 3
+detector_efficiency: 0.98
+truncation_length: 512
+hits_normalizer:
+  _target_: src.normalization.ConstraintsNormalizer
+track_params_normalizer:
+  _target_: src.normalization.TrackParamsNormalizer
