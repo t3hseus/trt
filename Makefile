@@ -22,4 +22,4 @@ venv: ${VENV}
 
 .PHONY: train
 train:
-	CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python train.py --config "configs/train.cfg"
+	CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python train.py
