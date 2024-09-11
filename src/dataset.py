@@ -162,8 +162,10 @@ def collate_fn(samples: List[DatasetSample]) -> BatchSample:
     batch_inputs = np.zeros((batch_size, maxlen, n_features), dtype=np.float32)
     batch_mask = np.zeros((batch_size, maxlen), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
-    batch_targets = np.zeros((batch_size, *samples[0]["params"].shape))
-    batch_orig_params = np.zeros((batch_size, *samples[0]["orig_params"].shape))
+    batch_targets = np.zeros(
+        (batch_size, *samples[0]["params"].shape), dtype=np.float32)
+    batch_orig_params = np.zeros(
+        (batch_size, *samples[0]["orig_params"].shape), dtype=np.float32)
 
     for i, sample in enumerate(samples):
         batch_inputs[i, : len(sample["hits"])] = sample["hits"]

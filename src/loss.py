@@ -1,10 +1,11 @@
 # taken from https://github.com/facebookresearch/detr/blob/master/models/detr.py
 
+import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-from src.postprocess import TracksFromParamsGenerator
+from src.postprocess import EventRecoveryFromPredictions
 
 
 # taken from https://github.com/facebookresearch/detr/blob/master/models/matcher.py
@@ -31,7 +32,7 @@ class HungarianMatcher(nn.Module):
             raise ValueError("All costs of the Matcher can't be 0")
 
     @torch.no_grad()
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets) -> list[tuple[torch.Tensor]]:
         """
         Args:
             outputs (`dict`):
@@ -64,12 +65,14 @@ class HungarianMatcher(nn.Module):
         out_prob = (
             outputs["logits"].flatten(0, 1).softmax(-1)
         )  # [batch_size * num_queries, num_classes]
-        out_param = outputs["params"].flatten(0, 1)  # [batch_size * num_queries, 7]
+        out_param = outputs["params"].flatten(
+            0, 1)  # [batch_size * num_queries, 7]
 
         # Also concat the target labels and boxes
         # target_ids = torch.cat([v["class_labels"] for v in targets])
         # dummy targets
-        target_ids = torch.ones(targets.shape[0] * targets.shape[1], dtype=torch.int)
+        target_ids = torch.ones(
+            targets.shape[0] * targets.shape[1], dtype=torch.int)
         target_param = targets.flatten(
             0, 1
         )  # torch.cat([v["params"] for v in targets])
@@ -80,7 +83,8 @@ class HungarianMatcher(nn.Module):
         class_cost = -out_prob[:, target_ids]
 
         # Compute the L1 cost between parameters
-        params_cost = torch.cdist(out_param.to(float), target_param.to(float), p=1)
+        params_cost = torch.cdist(out_param.to(
+            torch.float32), target_param.to(torch.float32), p=1)
 
         # Final cost matrix
         cost_matrix = self.params_cost * params_cost + self.class_cost * class_cost
@@ -130,7 +134,7 @@ class MatchingLoss(nn.Module):
     def __init__(
         self,
         matcher: HungarianMatcher,
-        hits_generator: TracksFromParamsGenerator,
+        hits_generator: EventRecoveryFromPredictions,
         num_classes: int,
         eos_coef: float,
         losses: list[str],
@@ -141,9 +145,19 @@ class MatchingLoss(nn.Module):
         self.eos_coef = eos_coef
         self.losses = losses
         self.hits_generator = hits_generator
-        empty_weight = torch.ones(self.num_classes + 1)
+
+        # place buffer to the appropiate device
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+        empty_weight = torch.ones(self.num_classes + 1, device=device)
         empty_weight[-1] = self.eos_coef
-        self.weight_dict = {"loss_ce": 0.5, "loss_params": 1.0, "loss_hits": 0.001}
+        self.weight_dict = {"loss_ce": 0.5,
+                            "loss_params": 1.0, "loss_hits": 0.001}
         self.register_buffer("empty_weight", empty_weight)
 
     @property
@@ -194,7 +208,8 @@ class MatchingLoss(nn.Module):
         )
         # Count the number of predictions that are NOT "no-object" (which is the last class)
         card_pred = (logits.argmax(-1) != logits.shape[-1] - 1).sum(1)
-        card_err = nn.functional.l1_loss(card_pred.float(), target_lengths.float())
+        card_err = nn.functional.l1_loss(
+            card_pred.float(), target_lengths.float())
         losses = {"cardinality_error": card_err}
         return losses
 
@@ -224,37 +239,48 @@ class MatchingLoss(nn.Module):
 
     def loss_hits(self, outputs, targets, indices, num_params):
         idx = self._get_source_permutation_idx(indices)
-        source_params = outputs["params"][idx]
-        source_charges = (
-            torch.argmax(outputs["logits"][idx], dim=-1).to(torch.float) * 2 - 1
+        predicted_tracks = self.hits_generator(
+            pred_params=outputs["params"][idx],
+            pred_charges=outputs["logits"][idx],
+            group_by_tracks=True
         )
-        source_charges = source_charges.unsqueeze(-1)
-        source_params = torch.concat((source_params, source_charges), dim=-1)
-        source_tracks, _ = self.hits_generator.generate_tracks(
-            source_params.detach().cpu().numpy()
-        )
-        target_params = torch.cat(
-            [t["params"][i] for t, (_, i) in zip(targets, indices)], dim=0
-        )
-        target_charges = torch.cat(
-            [t["class_labels"][i] for t, (_, i) in zip(targets, indices)], dim=0
-        )
-        target_charges = target_charges.to(torch.float) * 2 - 1
-        target_charges = target_charges.unsqueeze(-1)
-        target_params = torch.concat((target_params, target_charges), dim=-1)
 
-        target_tracks, _ = self.hits_generator.generate_tracks(target_params)
+        target_tracks = self.hits_generator(
+            # TODO: rewrite to omit such weird indexing
+            pred_params=torch.cat(
+                [t["params"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            ),
+            pred_charges=torch.cat(
+                [t["class_labels"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            ),
+            from_targets=True,
+            group_by_tracks=True
+        )
+
         dists = torch.tensor(0.0)
-        if not (len(source_tracks)):
+        if not (len(predicted_tracks)):
             return torch.tensor(1000.0)
-        for pred_track, target_track in zip(
-            torch.tensor(source_tracks), torch.tensor(target_tracks)
-        ):
-            if len(target_track):
-                dists += self._dist(pred_track, target_track).max()
-            else:
+
+        for pred_track, target_track in zip(predicted_tracks, target_tracks):
+            if len(target_track) == 0:
                 dists += torch.tensor(100.0)
-        return {"loss_hits": dists / (len(source_tracks) + 1)}
+                continue
+            # it is crucial to use paddings in case of tracks with different lengths
+            n_stations = max(pred_track.shape[0], target_track.shape[0])
+            target_track_padded = np.zeros(
+                (n_stations, target_track.shape[1]), dtype=np.float32)
+            target_track_padded[:len(target_track)] = target_track
+            pred_track_padded = np.zeros(
+                (n_stations, pred_track.shape[1]), dtype=np.float32)
+            pred_track_padded[:len(pred_track)] = pred_track
+            # convert to tensors
+            pred_track_padded = torch.from_numpy(pred_track_padded)
+            target_track_padded = torch.from_numpy(target_track_padded)
+            # calculate dists
+            # TODO: calculate mean instead of max???
+            dists += self._dist(pred_track_padded, target_track_padded).max()
+
+        return {"loss_hits": dists / (len(predicted_tracks) + 1)}
 
     def _dist(self, x_1, x_2):
         return torch.sqrt(
@@ -266,7 +292,8 @@ class MatchingLoss(nn.Module):
     def _get_source_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat(
-            [torch.full_like(source, i) for i, (source, _) in enumerate(indices)]
+            [torch.full_like(source, i)
+             for i, (source, _) in enumerate(indices)]
         )
         source_idx = torch.cat([source for (source, _) in indices])
         return batch_idx, source_idx
@@ -274,7 +301,8 @@ class MatchingLoss(nn.Module):
     def _get_target_permutation_idx(self, indices):
         # permute targets following indices
         batch_idx = torch.cat(
-            [torch.full_like(target, i) for i, (_, target) in enumerate(indices)]
+            [torch.full_like(target, i)
+             for i, (_, target) in enumerate(indices)]
         )
         target_idx = torch.cat([target for (_, target) in indices])
         return batch_idx, target_idx
@@ -315,17 +343,20 @@ class MatchingLoss(nn.Module):
         targets_dict = [
             {
                 "params": targets[idx][..., :-1],
-                "class_labels": targets[idx][..., -1],
+                "class_labels": targets[idx][..., -1],  # charge
             }
             for idx in range(targets.shape[0])
         ]
+        # match param vectors
+        # TODO: why without charge???
         indices = self.matcher(outputs_without_aux, targets[..., :-1])
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
         num_tracks = targets.shape[0] * targets.shape[1]
         # sum(len(t["class_labels"]) for t in targets)
         num_tracks = torch.as_tensor(
-            [num_tracks], dtype=torch.float, device=next(iter(outputs.values())).device
+            [num_tracks], dtype=torch.float, device=next(
+                iter(outputs.values())).device
         )
         world_size = 1
         num_tracks = torch.clamp(num_tracks / world_size, min=1).item()

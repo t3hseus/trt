@@ -1,7 +1,7 @@
 _target_: src.model.TRT
 dropout: 0.1
 n_points: ${dataset.truncation_length}
-num_candidates: 20
+num_candidates: ${dataset.max_event_tracks}
 num_out_params: 6  # - charge
 
 
