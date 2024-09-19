@@ -18,70 +18,45 @@ hydra:
     subdir: ${hydra.job.num}
 
 
-num_epochs: 20
-train_batch_size: 16
-val_batch_size: 16
+num_epochs: 20000
+train_batch_size: 32
+val_batch_size: 32
 random_seed: 42
 logging_dir: ${hydra_dir}
-resume_from_checkpoint: None
-num_workers: 4
+resume_from_checkpoint: #r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
+num_workers: 0
 pin_memory: False
 
 metrics:
 # TODO: rewrite metrics to more useful ones
   - _target_: src.loss.MatchingLoss
     _recursive_: True
-    matcher:
-      _target_: src.loss.HungarianMatcher
-      class_cost: 1.
-      params_cost: 1.
-    hits_generator:
-      _target_: src.postprocess.EventRecoveryFromPredictions
-      event_generator:
-        _target_: src.data_generation.SPDEventGenerator
-        max_event_tracks: ${dataset.max_event_tracks}
-        detector_eff: ${dataset.detector_efficiency}
-      track_params_normalizer: ${dataset.track_params_normalizer}
-
-    num_classes: 1
-    eos_coef: 0.2
+    matcher: ${criterion.matcher}
+    hits_generator: ${criterion.hits_generator}
+    num_classes: ${criterion.num_classes}
+    eos_coef: ${criterion.eos_coef}
     losses: ["labels"]
+    weights_dict: ${criterion.weights_dict}
 
   - _target_: src.loss.MatchingLoss
     _recursive_: True
-    matcher:
-      _target_: src.loss.HungarianMatcher
-      class_cost: 1.
-      params_cost: 1.
-    hits_generator:
-      _target_: src.postprocess.EventRecoveryFromPredictions
-      event_generator:
-        _target_: src.data_generation.SPDEventGenerator
-        max_event_tracks: ${dataset.max_event_tracks}
-        detector_eff: ${dataset.detector_efficiency}
-      track_params_normalizer: ${dataset.track_params_normalizer}
-    num_classes: 1
-    eos_coef: 0.2
+    matcher: ${criterion.matcher}
+    hits_generator: ${criterion.hits_generator}
+    num_classes: ${criterion.num_classes}
+    eos_coef: ${criterion.eos_coef}
     losses: [ "params" ]
+    weights_dict: ${criterion.weights_dict}
 
   - _target_: src.loss.MatchingLoss
     _recursive_: True
-    matcher:
-      _target_: src.loss.HungarianMatcher
-      class_cost: 1.
-      params_cost: 1.
-    hits_generator:
-      _target_: src.postprocess.EventRecoveryFromPredictions
-      event_generator:
-        _target_: src.data_generation.SPDEventGenerator
-        max_event_tracks: ${dataset.max_event_tracks}
-        detector_eff: ${dataset.detector_efficiency}
-      track_params_normalizer: ${dataset.track_params_normalizer}
-    num_classes: 1
-    eos_coef: 0.2
+    matcher: ${criterion.matcher}
+    hits_generator: ${criterion.hits_generator}
+    num_classes: ${criterion.num_classes}
+    eos_coef: ${criterion.eos_coef}
     losses: [ "hits" ]
+    weights_dict: ${criterion.weights_dict}
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 0.0003
+  lr: 0.001
   weight_decay: 0.0  # 00001

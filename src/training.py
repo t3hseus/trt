@@ -45,9 +45,9 @@ class TrainModel(pl.LightningModule):
 
         Args:
             checkpoint_path: Path to the directory with checkpoint
-            strict: Whether to strictly enforce that the keys in :attr:`checkpoint_path` of the 
-                original `load_from_checkpoint` method match the keys returned by this module's state dict. 
-                Defaults to ``True`` unless ``LightningModule.strict_loading`` is set, in which case 
+            strict: Whether to strictly enforce that the keys in :attr:`checkpoint_path` of the
+                original `load_from_checkpoint` method match the keys returned by this module's state dict.
+                Defaults to ``True`` unless ``LightningModule.strict_loading`` is set, in which case
                 it defaults to the value of ``LightningModule.strict_loading``.
         """
         checkpoint_dir = Path(checkpoint_dir)
@@ -97,6 +97,7 @@ class TrainModel(pl.LightningModule):
         _ = batch.pop("orig_params")
         preds = self.forward(batch)
         loss = self.criterion(preds, targets)
+
         metric_vals = self._calc_metrics(preds, targets)
         return {"loss": loss, "prediction": preds, "target": targets, **metric_vals}
 
@@ -119,7 +120,11 @@ class TrainModel(pl.LightningModule):
         return tqdm_dict["val_loss"]
 
     def configure_optimizers(self):
-        return self.optimizer
+
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.optimizer, max_lr=0.1, total_steps=30000
+        )
+        return [self.optimizer] , [scheduler]  # (self.parameters())
 
     def save_prediction_figure_to_tensorboard(
             self,

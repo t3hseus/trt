@@ -14,12 +14,11 @@ TParamsArr = Annotated[npt.NDArray[DType],
 TorchTParamsArr = Annotated[torch.FloatTensor,
                             Literal["pt", "phi", "theta", "charge"]]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
+TorchArray3 = Annotated[torch.Tensor, Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
+TorchArrayN = Annotated[torch.Tensor, Literal["N"]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
-
-TArray3 = Annotated[torch.FloatTensor, Literal[3]]
-TArrayN = Annotated[torch.FloatTensor, Literal["N"]]
-TArrayNx3 = Annotated[torch.FloatTensor, Literal["N", 3]]
+TorchArrayNx3 = Annotated[torch.Tensor, Literal["N", 3]]
 
 
 @_dc.dataclass(frozen=True)
@@ -32,13 +31,22 @@ class Momentum:
     def numpy(self) -> Array3[np.float32]:
         return np.asarray([self.px, self.py, self.pz], dtype=np.float32)
 
-    @cached_property
-    def torch(self) -> TArray3:
-        return torch.FloatTensor([self.px, self.py, self.pz])
-
     def __str__(self) -> str:
         return f"Momentum(px={self.px:.2f}, py={self.py:.2f}, pz={self.pz:.2f})"
 
+
+@_dc.dataclass(frozen=True)
+class TorchMomentum:
+    px: torch.float32
+    py: torch.float32
+    pz: torch.float32
+
+    @cached_property
+    def torch(self) -> TorchArray3:
+        return torch.stack([self.px, self.py, self.pz])
+
+    def __str__(self) -> str:
+        return f"Momentum(px={self.px:.2f}, py={self.py:.2f}, pz={self.pz:.2f})"
 
 @_dc.dataclass(frozen=True)
 class Point:
@@ -55,10 +63,24 @@ class Point:
         """Returns numpy array with values (x, y, z)"""
         return np.asarray([self.x, self.y, self.z], dtype=np.float32)
 
+    def __str__(self) -> str:
+        return f"Point(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
+
+
+@_dc.dataclass(frozen=True)
+class TorchPoint:
+    x: torch.float32
+    y: torch.float32
+    z: torch.float32
+
     @cached_property
-    def torch(self) -> TArray3:
+    def r(self) -> torch.float32:
+        return torch.sqrt(self.x * self.x + self.y * self.y)
+
+    @cached_property
+    def torch(self) -> TorchArray3:
         """Returns numpy array with values (x, y, z)"""
-        return torch.FloatTensor([self.x, self.y, self.z])
+        return torch.stack([self.x, self.y, self.z])
 
     def __str__(self) -> str:
         return f"Point(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
@@ -66,6 +88,11 @@ class Point:
 
 @_dc.dataclass(frozen=True)
 class Vertex(Point):
+    def __str__(self) -> str:
+        return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
+
+@_dc.dataclass(frozen=True)
+class TorchVertex(TorchPoint):
     def __str__(self) -> str:
         return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
 
@@ -92,10 +119,34 @@ class TrackParams:
             [self.pt, self.phi, self.theta, self.charge], dtype=np.float32
         )
 
+    def __str__(self) -> str:
+        return (
+            f"TrackParams(pt={self.pt:.2f}, phi={self.phi:.2f}, "
+            f"theta={self.theta:.2f}, charge={self.charge})"
+        )
+
+
+@_dc.dataclass(frozen=True)
+class TorchTrackParams:
+    phi: torch.float32
+    theta: torch.float32
+    pt: torch.float32
+    charge: torch.int32  # -1 or 1
+
     @cached_property
-    def torch(self) -> TorchTParamsArr:
+    def pz(self) -> torch.float32:
+        return self.pt / torch.tan(self.theta) * self.charge
+
+    @cached_property
+    def phit(self) -> torch.float32:
+        return self.phi - torch.pi / 2
+
+    @cached_property
+    def torch(self) -> TorchParamsArr:
         """Returns numpy array with parameters - (pt, phi, theta, charge)"""
-        return torch.FloatTensor([self.pt, self.phi, self.theta, self.charge])
+        return torch.stack(
+            [self.pt, self.phi, self.theta, self.charge]
+        )
 
     def __str__(self) -> str:
         return (
@@ -106,7 +157,6 @@ class TrackParams:
 
 class Event:
     """Single generated event"""
-
     def __init__(
         self,
         hits: ArrayNx3[np.float32],

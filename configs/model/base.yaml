@@ -1,7 +1,8 @@
-_target_: src.model.TRT
+_target_: src.model_new.TRT
 dropout: 0.1
 n_points: ${dataset.truncation_length}
 num_candidates: ${dataset.max_event_tracks}
-num_out_params: 6  # - charge
+num_out_params: 7  # - charge
+num_charges: 1
 
 

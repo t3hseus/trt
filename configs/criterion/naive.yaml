@@ -2,7 +2,7 @@ _target_: src.loss.MatchingLoss
 _recursive_: True
 matcher:
   _target_: src.loss.HungarianMatcher
-  class_cost: 0.5
+  class_cost: 1.
   params_cost: 2.
 hits_generator:
   _target_: src.postprocess.EventRecoveryFromPredictions
@@ -13,4 +13,9 @@ hits_generator:
   track_params_normalizer: ${dataset.track_params_normalizer}
 num_classes: 1
 eos_coef: 0.2
-losses: ["labels", "params", "hits"]
+losses: ["labels", "params"] #, "hits"
+charge_as_class: False
+weights_dict:
+  loss_ce: 0.5
+  loss_params: 1.0
+  loss_hits: 0.0

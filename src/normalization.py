@@ -3,6 +3,7 @@ from typing import Annotated, Literal, Tuple, TypeVar, Union
 import gin
 import numpy as np
 import numpy.typing as npt
+import torch
 
 from .constants import (OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE,
                         THETA_RANGE)
@@ -116,7 +117,8 @@ class TrackParamsNormalizer:
     def denormalize(
         self,
         norm_params_vector: NormTParamsArr,
-        is_charge_categorical: bool = True
+        is_charge_categorical: bool = True,
+        is_numpy: bool = True
         # vx: np.float32,
         # vy: np.float32,
         # vz: np.float32,
@@ -133,14 +135,20 @@ class TrackParamsNormalizer:
         orig_vz = self.minmax_denorm(norm_params_vector[2], *self._vz_range)
         orig_pt = self.minmax_denorm(norm_params_vector[3], *self._pt_range)
         orig_phi = self.minmax_denorm(norm_params_vector[4], *self._phi_range)
-        orig_theta = self.minmax_denorm(norm_params_vector[5], 0, np.pi)
+        pi = np.pi if is_numpy else torch.pi
+        orig_theta = self.minmax_denorm(norm_params_vector[5], 0, pi)
         # from categorical (0, 1) to (-1, 1)
         if is_charge_categorical:
             orig_charge = norm_params_vector[6] * 2 - 1
         else:
             orig_charge = norm_params_vector[6]
-        params_vector = np.array(
-            [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge],
-            dtype=np.float32,
-        )
+        if is_numpy:
+            params_vector = np.array(
+                [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge],
+                dtype=np.float32,
+            )
+        else:
+            params_vector = torch.stack(
+                [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge]
+            )
         return params_vector

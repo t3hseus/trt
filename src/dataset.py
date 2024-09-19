@@ -166,6 +166,21 @@ class SPDEventsDataset(Dataset):
 
 
 def collate_fn(samples: List[DatasetSample]) -> BatchSample:
+    """
+	#TODO: add special collate without padded track params in targets
+
+	idx = matched(preds, targets) -> list[tuple(int, int)]
+	idx = {(1, 0), (3, 2), (4, 1)} # B-b, D-d, E-e
+
+	clf_targets = {0, 1, 0, 1, 1}
+	pred_targets = {1, 1, 0, 0, 1}
+
+	clf_loss = cross_entropy(clf_targets, pred_targets)
+	params_loss = mae(pred[idx], targets)
+	hits_loss = mae(generate_hits(pred[idx]), generate_hits(targets))
+
+	loss = alpha * clf_loss + beta * params_loss + gamma * hits_loss
+    """
     maxlen = max([len(sample["hits"]) for sample in samples])
     batch_size = len(samples)
     n_features = samples[0]["hits"].shape[-1]

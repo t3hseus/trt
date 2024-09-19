@@ -228,6 +228,8 @@ class TRT(nn.Module):
         self.query_embed = nn.Embedding(
             num_embeddings=num_candidates, embedding_dim=channels
         )
+
+        self.encoder = PointTransformerEncoder(channels=channels)
         self.decoder = PCTDetectDecoder(
             channels=channels, dim_feedforward=channels // 2, nhead=2, dropout=dropout
         )
@@ -242,7 +244,7 @@ class TRT(nn.Module):
             nn.LeakyReLU(negative_slope=0.2),
         )
 
-    def forward(self, inputs, mask=None) -> dict[str, torch.Tensor]:
+    def forward(self, inputs, mask=None, orig_params=None) -> dict[str, torch.Tensor]:
         """
         It returns a dict with the following elements:
            - "pred_logits": the classification logits (including no-object) for all
@@ -256,21 +258,22 @@ class TRT(nn.Module):
             inputs = inputs.permute(0, 2, 1)
         batch_size, _, n = inputs.size()  # B, D, N
 
-        x = self.emb_encoder(inputs)
-        x_encoder = self.encoder(x, mask=mask)
+        x_emb = self.emb_encoder(inputs)
+        x_encoder = self.encoder(x_emb, mask=mask)
         # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(
             0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(x_encoder, x_decoder, query_pos_embed, mask=mask)
-        # outputs_class = self.class_head(x)  # no sigmoid, plain logits!
+        # no sigmoid, plain logits! output is [+1, -1, no_object]
+        outputs_class = self.class_head(x)  # no sigmoid, plain logits!
         # TODO: I'd rather use no activation
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
         return {
-            # "logits": outputs_class,
+            "logits": outputs_class,
             "params": outputs_coord,
         }
 
