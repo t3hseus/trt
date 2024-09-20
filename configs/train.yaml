@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - model: base
-  - criterion: naive
+  - criterion: torch
   - user_settings: user_settings
   - dataset: base
 
@@ -24,7 +24,7 @@ val_batch_size: 32
 random_seed: 42
 logging_dir: ${hydra_dir}
 resume_from_checkpoint: #r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
-num_workers: 0
+num_workers: 1
 pin_memory: False
 
 metrics:
@@ -33,6 +33,7 @@ metrics:
     _recursive_: True
     matcher: ${criterion.matcher}
     hits_generator: ${criterion.hits_generator}
+    event_generator: ${criterion.event_generator}
     num_classes: ${criterion.num_classes}
     eos_coef: ${criterion.eos_coef}
     losses: ["labels"]
@@ -42,6 +43,7 @@ metrics:
     _recursive_: True
     matcher: ${criterion.matcher}
     hits_generator: ${criterion.hits_generator}
+    event_generator: ${criterion.event_generator}
     num_classes: ${criterion.num_classes}
     eos_coef: ${criterion.eos_coef}
     losses: [ "params" ]
@@ -51,6 +53,7 @@ metrics:
     _recursive_: True
     matcher: ${criterion.matcher}
     hits_generator: ${criterion.hits_generator}
+    event_generator: ${criterion.event_generator}
     num_classes: ${criterion.num_classes}
     eos_coef: ${criterion.eos_coef}
     losses: [ "hits" ]

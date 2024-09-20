@@ -67,8 +67,8 @@ class TrainModel(pl.LightningModule):
 
         # get the latest checkpoint path
         checkpoint_path = get_latest_checkpoint(
-            checkpoint_dir=checkpoint_dir,
-            model_name=model.__class__.__name__)
+            checkpoint_dir=checkpoint_dir, model_name=model.__class__.__name__
+        )
 
         return super().load_from_checkpoint(
             checkpoint_path=checkpoint_path,
@@ -76,7 +76,7 @@ class TrainModel(pl.LightningModule):
             criterion=criterion,
             metrics=metrics,
             optimizer=optimizer,
-            strict=strict
+            strict=strict,
         )
 
     def forward(self, inputs: Dict[str, torch.FloatTensor]):
@@ -111,10 +111,12 @@ class TrainModel(pl.LightningModule):
     def validation_step(self, batch: BatchSample, batch_idx: int):
         result_dict = self._forward_batch(batch)
         # save results of validation for on_validation_epoch_end callback
-        self.validation_step_outputs.append({
-            "prediction": result_dict.pop("prediction"),
-            "target": result_dict.pop("target")
-        })
+        self.validation_step_outputs.append(
+            {
+                "prediction": result_dict.pop("prediction"),
+                "target": result_dict.pop("target"),
+            }
+        )
         tqdm_dict = {f"val_{k}": v for k, v in result_dict.items()}
         self.log_dict(tqdm_dict, prog_bar=True, sync_dist=True)
         return tqdm_dict["val_loss"]
@@ -124,12 +126,13 @@ class TrainModel(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer, max_lr=0.1, total_steps=30000
         )
-        return [self.optimizer] , [scheduler]  # (self.parameters())
+        return [self.optimizer], [scheduler]  # (self.parameters())
 
     def save_prediction_figure_to_tensorboard(
-            self,
-            pred_orig_figure: go.Figure,
-            tag: str = "Event Reconstruction Visualization"):
+        self,
+        pred_orig_figure: go.Figure,
+        tag: str = "Event Reconstruction Visualization",
+    ):
         # Convert the Plotly figure to a PNG image
         png_bytes = pred_orig_figure.to_image(format="png", scale=3)
 
@@ -142,7 +145,7 @@ class TrainModel(pl.LightningModule):
         # Create a Matplotlib figure and add the image
         fig, ax = plt.subplots(figsize=(10, 8))
         ax.imshow(image_array)
-        ax.axis('off')  # Disable axes for better display
+        ax.axis("off")  # Disable axes for better display
         plt.tight_layout()
 
         # Log the Matplotlib figure to TensorBoard
@@ -151,33 +154,33 @@ class TrainModel(pl.LightningModule):
         # Close the Matplotlib figure to free memory
         plt.close(fig)
 
-    def on_validation_epoch_end(self):
+    def on_validation_epoch_end_1(self):
         # take first event from first batch for validation
         sample_idx = 0
         event_idx = 7
         sample_for_visualization = self.validation_step_outputs[sample_idx]
         # get target event plot on first epoch
         # no need to re-draw it every time
+        print("start_vis")
         if self.current_epoch == 0:
-            hits, track_ids = self.criterion.hits_generator(
+            hits, track_ids = self.criterion.event_generator(
                 pred_params=sample_for_visualization["target"][event_idx][:, :-1],
                 pred_charges=sample_for_visualization["target"][event_idx][:, -1],
-                from_targets=True
+                from_targets=True,
             )
             orig_event_fig = draw_event(hits, track_ids)
             self.save_prediction_figure_to_tensorboard(
-                orig_event_fig,
-                tag=f"Batch {sample_idx}, event {event_idx} original"
+                orig_event_fig, tag=f"Batch {sample_idx}, event {event_idx} original"
             )
 
         # get reconstructed event plot
         hits, track_ids = self.criterion.hits_generator(
             pred_params=sample_for_visualization["prediction"]["params"][event_idx],
-            pred_charges=sample_for_visualization["prediction"]["logits"][event_idx]
+            pred_charges=sample_for_visualization["prediction"]["logits"][event_idx],
         )
         pred_event_fig = draw_event(hits, track_ids)
         self.save_prediction_figure_to_tensorboard(
-            pred_event_fig,
-            tag=f"Batch {sample_idx}, event {event_idx} prediction"
+            pred_event_fig, tag=f"Batch {sample_idx}, event {event_idx} prediction"
         )
+        print("HERE")
         self.validation_step_outputs.clear()  # free memory

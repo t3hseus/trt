@@ -6,8 +6,12 @@ import torch
 from torch.utils.data import Dataset
 
 from .data_generation import ArrayN, ArrayNx3, SPDEventGenerator
-from .normalization import (ConstraintsNormalizer, NormTParamsArr, TParamsArr,
-                            TrackParamsNormalizer)
+from .normalization import (
+    ConstraintsNormalizer,
+    NormTParamsArr,
+    TParamsArr,
+    TrackParamsNormalizer,
+)
 
 
 class DatasetMode(IntEnum):
@@ -167,19 +171,19 @@ class SPDEventsDataset(Dataset):
 
 def collate_fn(samples: List[DatasetSample]) -> BatchSample:
     """
-	#TODO: add special collate without padded track params in targets
+    #TODO: add special collate without padded track params in targets
 
-	idx = matched(preds, targets) -> list[tuple(int, int)]
-	idx = {(1, 0), (3, 2), (4, 1)} # B-b, D-d, E-e
+    idx = matched(preds, targets) -> list[tuple(int, int)]
+    idx = {(1, 0), (3, 2), (4, 1)} # B-b, D-d, E-e
 
-	clf_targets = {0, 1, 0, 1, 1}
-	pred_targets = {1, 1, 0, 0, 1}
+    clf_targets = {0, 1, 0, 1, 1}
+    pred_targets = {1, 1, 0, 0, 1}
 
-	clf_loss = cross_entropy(clf_targets, pred_targets)
-	params_loss = mae(pred[idx], targets)
-	hits_loss = mae(generate_hits(pred[idx]), generate_hits(targets))
+    clf_loss = cross_entropy(clf_targets, pred_targets)
+    params_loss = mae(pred[idx], targets)
+    hits_loss = mae(generate_hits(pred[idx]), generate_hits(targets))
 
-	loss = alpha * clf_loss + beta * params_loss + gamma * hits_loss
+    loss = alpha * clf_loss + beta * params_loss + gamma * hits_loss
     """
     maxlen = max([len(sample["hits"]) for sample in samples])
     batch_size = len(samples)
@@ -189,9 +193,11 @@ def collate_fn(samples: List[DatasetSample]) -> BatchSample:
     batch_mask = np.zeros((batch_size, maxlen), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     batch_targets = np.zeros(
-        (batch_size, *samples[0]["params"].shape), dtype=np.float32)
+        (batch_size, *samples[0]["params"].shape), dtype=np.float32
+    )
     batch_orig_params = np.zeros(
-        (batch_size, *samples[0]["orig_params"].shape), dtype=np.float32)
+        (batch_size, *samples[0]["orig_params"].shape), dtype=np.float32
+    )
 
     for i, sample in enumerate(samples):
         batch_inputs[i, : len(sample["hits"])] = sample["hits"]

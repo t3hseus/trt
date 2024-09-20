@@ -1,5 +1,5 @@
-train_samples: 64000
-val_samples: 3200
+train_samples: 64
+val_samples: 32
 max_event_tracks: 10
 detector_efficiency: 1.0
 truncation_length: 512

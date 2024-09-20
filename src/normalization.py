@@ -5,8 +5,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-from .constants import (OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE,
-                        THETA_RANGE)
+from .constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
 
 DType = TypeVar("DType", bound=np.generic)
 NormTParamsArr = Annotated[npt.NDArray[DType], Literal[8]]

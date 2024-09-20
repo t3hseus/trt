@@ -92,49 +92,49 @@ def display_side_by_side(
     predicted_event_fig: go.Figure,
     original_event_fig: go.Figure,
     left_title: str = "Prediction",
-    right_title: str = "Ground Truth"
+    right_title: str = "Ground Truth",
 ) -> go.Figure:
 
     # Create a 1x2 subplot figure
     fig = make_subplots(
-        rows=1, cols=2,
-        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
-        subplot_titles=(left_title, right_title)
+        rows=1,
+        cols=2,
+        specs=[[{"type": "scatter3d"}, {"type": "scatter3d"}]],
+        subplot_titles=(left_title, right_title),
     )
 
     # Get traces from the left figure and add them to the first subplot
     for trace in predicted_event_fig.data:
         trace_left = trace.to_plotly_json()
-        trace_left['name'] = f"[pred] {trace_left['name']}"
-        trace_left['showlegend'] = True
+        trace_left["name"] = f"[pred] {trace_left['name']}"
+        trace_left["showlegend"] = True
         fig.add_trace(go.Scatter3d(**trace_left), row=1, col=1)
 
     # Get traces from the right figure and add them to the second subplot
     for trace in original_event_fig.data:
         trace_right = trace.to_plotly_json()
-        trace_right['name'] = f"[orig] {trace_right['name']}"
-        trace_right['showlegend'] = True
+        trace_right["name"] = f"[orig] {trace_right['name']}"
+        trace_right["showlegend"] = True
         fig.add_trace(go.Scatter3d(**trace_right), row=1, col=2)
 
     # Update layout for the overall figure
-    fig.update_layout(
-        margin=dict(t=50, b=10, l=10, r=10),
-        height=600
-    )
+    fig.update_layout(margin=dict(t=50, b=10, l=10, r=10), height=600)
 
     # Apply the camera and aspect ratio settings to both scenes
     fig.update_scenes(
         aspectmode="manual",
         aspectratio=dict(x=1, y=1, z=1),
         camera=dict(eye=dict(x=2, y=0.1, z=0.1)),
-        row=1, col=1  # Apply to the first subplot (Prediction)
+        row=1,
+        col=1,  # Apply to the first subplot (Prediction)
     )
 
     fig.update_scenes(
         aspectmode="manual",
         aspectratio=dict(x=1, y=1, z=1),
         camera=dict(eye=dict(x=2, y=0.1, z=0.1)),
-        row=1, col=2  # Apply to the second subplot (Ground Truth)
+        row=1,
+        col=2,  # Apply to the second subplot (Ground Truth)
     )
 
     return fig

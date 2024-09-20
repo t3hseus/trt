@@ -9,10 +9,8 @@ import torch
 from .constants import OZ_RANGE
 
 DType = TypeVar("DType", bound=np.generic)
-TParamsArr = Annotated[npt.NDArray[DType],
-                       Literal["pt", "phi", "theta", "charge"]]
-TorchTParamsArr = Annotated[torch.FloatTensor,
-                            Literal["pt", "phi", "theta", "charge"]]
+TParamsArr = Annotated[npt.NDArray[DType], Literal["pt", "phi", "theta", "charge"]]
+TorchTParamsArr = Annotated[torch.FloatTensor, Literal["pt", "phi", "theta", "charge"]]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
 TorchArray3 = Annotated[torch.Tensor, Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
@@ -47,6 +45,7 @@ class TorchMomentum:
 
     def __str__(self) -> str:
         return f"Momentum(px={self.px:.2f}, py={self.py:.2f}, pz={self.pz:.2f})"
+
 
 @_dc.dataclass(frozen=True)
 class Point:
@@ -90,6 +89,7 @@ class TorchPoint:
 class Vertex(Point):
     def __str__(self) -> str:
         return f"Vertex(x={self.x:.2f}, y={self.y:.2f}, z={self.z:.2f})"
+
 
 @_dc.dataclass(frozen=True)
 class TorchVertex(TorchPoint):
@@ -142,10 +142,10 @@ class TorchTrackParams:
         return self.phi - torch.pi / 2
 
     @cached_property
-    def torch(self) -> TorchParamsArr:
-        """Returns numpy array with parameters - (pt, phi, theta, charge)"""
+    def torch(self) -> TorchTParamsArr:
+        """Returns tensor with parameters - (pt, phi, theta, charge)"""
         return torch.stack(
-            [self.pt, self.phi, self.theta, self.charge]
+            [self.pt, self.phi, self.theta, self.charge],
         )
 
     def __str__(self) -> str:
@@ -157,6 +157,7 @@ class TorchTrackParams:
 
 class Event:
     """Single generated event"""
+
     def __init__(
         self,
         hits: ArrayNx3[np.float32],
@@ -444,12 +445,9 @@ class SPDEventGenerator:
         )
 
     def reconstruct_track_hits_from_params(
-        self,
-        track_params: TrackParams,
-        vertex: Vertex
+        self, track_params: TrackParams, vertex: Vertex
     ) -> ArrayNx3[np.float32]:
-        """Generate track hits by its parameters
-        """
+        """Generate track hits by its parameters"""
 
         hits = []
 

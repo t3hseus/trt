@@ -10,8 +10,7 @@ class PointTransformerEncoder(nn.Module):
         # channels = int(n_points / 4)
         self.conv1 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
         self.conv2 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        self.conv3 = nn.Conv1d(channels * 4, channels,
-                               kernel_size=1, bias=False)
+        self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(channels)
         self.bn2 = nn.BatchNorm1d(channels)
         self.norm1 = nn.LayerNorm(channels)
@@ -66,8 +65,7 @@ class SALayer(nn.Module):
         energy = torch.bmm(x_q, x_k)  # why not normalization?
         d = energy.shape[-2]
         if mask is not None:
-            mask = torch.bitwise_and(
-                mask[:, :, None].bool(), mask[:, None, :].bool())
+            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
             energy = energy.masked_fill(mask == 0, -9e15)
             d = 1e-9 + mask.sum(dim=1, keepdim=True)
         energy = energy / d
@@ -115,8 +113,7 @@ class JointAttentionLayer(nn.Module):
         energy = torch.bmm(x_q, x_k)  # why not normalization?
         d = energy.shape[-2]
         if mask is not None:
-            mask = torch.bitwise_and(
-                mask[:, :, None].bool(), mask[:, None, :].bool())
+            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
             energy = energy.masked_fill(mask == 0, -9e15)
             d = 1e-9 + mask.sum(dim=1, keepdim=True)
         energy = energy / d
@@ -261,8 +258,7 @@ class TRT(nn.Module):
         x_emb = self.emb_encoder(inputs)
         x_encoder = self.encoder(x_emb, mask=mask)
         # decoder transformer
-        query_pos_embed = self.query_embed.weight.unsqueeze(
-            0).repeat(batch_size, 1, 1)
+        query_pos_embed = self.query_embed.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(x_encoder, x_decoder, query_pos_embed, mask=mask)

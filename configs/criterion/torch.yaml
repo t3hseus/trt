@@ -1,0 +1,30 @@
+
+_target_: src.loss.MatchingLoss
+_recursive_: True
+matcher:
+  _target_: src.loss.HungarianMatcher
+  class_cost: 1.
+  params_cost: 2.
+
+# TODO: fuse with torch-based generator
+event_generator:
+  _target_: src.postprocess.EventRecoveryFromPredictions
+  event_generator:
+    _target_: src.data_generation.SPDEventGenerator
+    max_event_tracks: ${dataset.max_event_tracks}
+    detector_eff: ${dataset.detector_efficiency}
+  track_params_normalizer: ${dataset.track_params_normalizer}
+
+hits_generator:
+  _target_: src.postprocess.TorchTrackGenerator
+  params_normalizer: ${dataset.track_params_normalizer}
+  hits_normalizer: ${dataset.hits_normalizer}
+  n_stations: 35
+num_classes: 1
+eos_coef: 0.2
+losses: ["labels", "params", "hits"] #, "hits"
+charge_as_class: False
+weights_dict:
+  loss_ce: 0.5
+  loss_params: 1.0
+  loss_hits: 0.0
