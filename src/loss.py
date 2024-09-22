@@ -202,7 +202,7 @@ class MatchingLoss(nn.Module):
             if ~torch.isnan(distance):
                 dists += distance
                 num_tracks += 1
-        return {"loss_hits": dists / (num_tracks)}
+        return {"loss_hits": dists / (num_tracks + 1)}
 
     def _dist(self, x_1, x_2):
         return torch.sqrt(

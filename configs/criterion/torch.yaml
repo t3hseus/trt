@@ -22,9 +22,9 @@ hits_generator:
   n_stations: 35
 num_classes: 1
 eos_coef: 0.2
-losses: ["labels", "params", "hits"] #, "hits"
+losses: ["labels", "params"] #, "hits"
 charge_as_class: False
 weights_dict:
   loss_ce: 0.5
   loss_params: 1.0
-  loss_hits: 0.0
+  loss_hits: 0.1
