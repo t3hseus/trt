@@ -231,7 +231,7 @@ class TRT(nn.Module):
         self.decoder = PCTDetectDecoder(
             channels=channels, dim_feedforward=channels // 2, nhead=2, dropout=dropout
         )
-        self.class_head = nn.Linear(channels, num_classes + 1)
+        # self.class_head = nn.Linear(channels, num_classes + 1)
 
         self.params_head = nn.Sequential(
             nn.Linear(channels, num_out_params * 2, bias=False),
@@ -264,13 +264,13 @@ class TRT(nn.Module):
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(x_encoder, x_decoder, query_pos_embed, mask=mask)
-        outputs_class = self.class_head(x)  # no sigmoid, plain logits!
+        # outputs_class = self.class_head(x)  # no sigmoid, plain logits!
         # TODO: I'd rather use no activation
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
         return {
-            "logits": outputs_class,
+            # "logits": outputs_class,
             "params": outputs_coord,
         }
 

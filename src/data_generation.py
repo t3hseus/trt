@@ -187,6 +187,7 @@ class SPDEventGenerator:
     def __init__(
         self,
         max_event_tracks: int = 10,
+        generate_fixed_tracks_num: bool = True,
         detector_eff: float = 1.0,
         add_fakes: bool = True,
         n_stations: int = 35,
@@ -198,6 +199,7 @@ class SPDEventGenerator:
         magnetic_field: float = 0.8,  # magnetic field [T]
     ):
         self.max_event_tracks = max_event_tracks
+        self.generate_fixed_tracks_num = generate_fixed_tracks_num
         self.detector_eff = detector_eff
         self.add_fakes = add_fakes
         self.n_stations = n_stations
@@ -348,8 +350,10 @@ class SPDEventGenerator:
             y=np.random.normal(*self.vy_range),
             z=np.random.uniform(*self.vz_range),
         )
-        # np.random.randint(1, self.max_event_tracks)
-        n_tracks = self.max_event_tracks
+        if self.generate_fixed_tracks_num:
+            n_tracks = self.max_event_tracks
+        else:
+            n_tracks = np.random.randint(1, self.max_event_tracks + 1)
 
         hits = []
         momentums = []
