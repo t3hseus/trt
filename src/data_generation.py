@@ -9,8 +9,10 @@ import torch
 from .constants import OZ_RANGE
 
 DType = TypeVar("DType", bound=np.generic)
-TParamsArr = Annotated[npt.NDArray[DType], Literal["pt", "phi", "theta", "charge"]]
-TorchTParamsArr = Annotated[torch.FloatTensor, Literal["pt", "phi", "theta", "charge"]]
+TParamsArr = Annotated[npt.NDArray[DType],
+                       Literal["pt", "phi", "theta", "charge"]]
+TorchTParamsArr = Annotated[torch.FloatTensor,
+                            Literal["pt", "phi", "theta", "charge"]]
 Array3 = Annotated[npt.NDArray[DType], Literal[3]]
 ArrayN = Annotated[npt.NDArray[DType], Literal["N"]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
@@ -169,12 +171,12 @@ class Event:
             f"Fraction of fakes: {len(self.fakes) / (len(self.hits) + len(self.fakes)):.2f}\n"
             f"Fraction of missing hits: {np.sum(self.missing_hits_mask) / len(self.hits):.2f}\n"
             f"Number of unique tracks: {self.n_tracks}\n"
-            f"Vertex: {self.vertex}\n"
+            f"Vertex: {str(self.vertex)}\n"
             "Track parameters:"
         )
         track_params_str = "\n".join(
             [
-                f"\tTrack ID: {tid}, {params}"
+                f"\tTrack ID: {tid}, {str(params)}"
                 for tid, params in self.track_params.items()
             ]
         )
@@ -185,6 +187,7 @@ class SPDEventGenerator:
     def __init__(
         self,
         max_event_tracks: int = 10,
+        generate_fixed_tracks_num: bool = True,
         detector_eff: float = 1.0,
         add_fakes: bool = True,
         n_stations: int = 35,
@@ -196,6 +199,7 @@ class SPDEventGenerator:
         magnetic_field: float = 0.8,  # magnetic field [T]
     ):
         self.max_event_tracks = max_event_tracks
+        self.generate_fixed_tracks_num = generate_fixed_tracks_num
         self.detector_eff = detector_eff
         self.add_fakes = add_fakes
         self.n_stations = n_stations
@@ -205,6 +209,9 @@ class SPDEventGenerator:
         self.z_coord_range = z_coord_range
         self.r_coord_range = r_coord_range
         self.magnetic_field = magnetic_field
+        self._radii = np.linspace(
+            self.r_coord_range[0], self.r_coord_range[1], self.n_stations
+        )  # mm
 
     @staticmethod
     def generate_hit_by_params(
@@ -338,15 +345,15 @@ class SPDEventGenerator:
         if add_fakes is None:
             add_fakes = self.add_fakes
 
-        radii = np.linspace(
-            self.r_coord_range[0], self.r_coord_range[1], self.n_stations
-        )  # mm
         vertex = Vertex(
             x=np.random.normal(*self.vx_range),
             y=np.random.normal(*self.vy_range),
             z=np.random.uniform(*self.vz_range),
         )
-        n_tracks = self.max_event_tracks  # np.random.randint(1, self.max_event_tracks)
+        if self.generate_fixed_tracks_num:
+            n_tracks = self.max_event_tracks
+        else:
+            n_tracks = np.random.randint(1, self.max_event_tracks + 1)
 
         hits = []
         momentums = []
@@ -360,7 +367,7 @@ class SPDEventGenerator:
             # until the needed track will be generated
             while track_hits.size == 0:
                 track_hits, track_momentums, track_params = self.generate_track_hits(
-                    vertex=vertex, radii=radii, detector_eff=detector_eff
+                    vertex=vertex, radii=self._radii, detector_eff=detector_eff
                 )
             # add to the global list of hits
             hits.append(track_hits)
@@ -374,7 +381,7 @@ class SPDEventGenerator:
         track_ids = np.concatenate(track_ids)
 
         if add_fakes:
-            fakes = self.generate_fakes(n_tracks=n_tracks, radii=radii)
+            fakes = self.generate_fakes(n_tracks=n_tracks, radii=self._radii)
 
         return Event(
             hits=hits,
@@ -385,6 +392,34 @@ class SPDEventGenerator:
             missing_hits_mask=missing_hits_mask,
             vertex=vertex,
         )
+
+    def reconstruct_track_hits_from_params(
+        self,
+        track_params: TrackParams,
+        vertex: Vertex
+    ) -> ArrayNx3[np.float32]:
+        """Generate track hits by its parameters
+        """
+
+        hits = []
+
+        for r in self._radii:
+            hit, _ = SPDEventGenerator.generate_hit_by_params(
+                track_params=track_params,
+                vertex=vertex,
+                Rc=r,
+            )
+
+            if (hit.x, hit.y, hit.z) == (0, 0, 0):
+                continue
+
+            if not self.z_coord_range[0] <= hit.z <= self.z_coord_range[1]:
+                continue
+
+            hits.append(hit.numpy)
+
+        hits = np.vstack(hits, dtype=np.float32)
+        return hits
 
 
 if __name__ == "__main__":

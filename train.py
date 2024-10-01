@@ -1,13 +1,13 @@
+import hydra
 import logging
 import os
 import warnings
-from argparse import ArgumentParser
-from typing import Callable, List, Optional, Union
-
-import gin
 import pytorch_lightning as pl
-import torch.optim
 import torchmetrics as tm
+
+from typing import Callable, List, Optional, Union
+from argparse import ArgumentParser
+from omegaconf import DictConfig
 from hydra.utils import instantiate
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -16,17 +16,14 @@ from torch.utils.data import DataLoader
 
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn
 from src.logging_utils import setup_logger
-from src.loss import HungarianMatcher, MatchingLoss
-from src.model import TRT
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
 from src.training import TrainModel
 
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
-import hydra
-from omegaconf import DictConfig, OmegaConf
 
 argparser = ArgumentParser()
-argparser.add_argument("--config", type=str, help="Path to the config file to use.")
+argparser.add_argument("--config", type=str,
+                       help="Path to the config file to use.")
 argparser.add_argument(
     "--log",
     type=str,
@@ -55,6 +52,7 @@ def experiment(
     num_epochs: int = 10,
     train_batch_size: int = 8,
     val_batch_size: int = 16,
+    accumulate_grad_batches: int = 1,
     random_seed: int = 42,
     logging_dir: str = "experiment_logs",
     resume_from_checkpoint: Optional[str] = None,
@@ -68,16 +66,7 @@ def experiment(
         dirpath=f"{tb_logger.log_dir}", filename=f"{{epoch}}-{{step}}"
     )
 
-    with open(os.path.join(tb_logger.log_dir, "train_config.cfg"), "w") as f:
-        f.write(gin.config_str())
-
     LOGGER.info(f"Log directory {tb_logger.log_dir}")
-    LOGGER.info(
-        "GOT config: \n======config======\n "
-        f"{gin.config_str()} "
-        "\n========config======="
-    )
-
     LOGGER.info(f"Setting random seed to {random_seed}")
     pl.seed_everything(random_seed)
 
@@ -113,6 +102,7 @@ def experiment(
         collate_fn=collate_fn,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        persistent_workers=True,
     )
     val_loader = DataLoader(
         val_data,
@@ -121,6 +111,7 @@ def experiment(
         collate_fn=collate_fn,
         num_workers=num_workers,
         pin_memory=pin_memory,
+        persistent_workers=True,
     )
 
     LOGGER.info("Creating model for training")
@@ -138,6 +129,7 @@ def experiment(
         deterministic=True,
         accelerator="auto",
         logger=tb_logger,
+        accumulate_grad_batches=accumulate_grad_batches,
         callbacks=[checkpoint_callback],
     )
     trainer.fit(
@@ -167,10 +159,12 @@ def main(cfg: DictConfig):
         detector_efficiency=cfg.dataset.detector_efficiency,
         truncation_length=cfg.dataset.truncation_length,
         hits_normalizer=instantiate(cfg.dataset.hits_normalizer),
-        track_params_normalizer=instantiate(cfg.dataset.track_params_normalizer),
+        track_params_normalizer=instantiate(
+            cfg.dataset.track_params_normalizer),
         num_epochs=cfg.num_epochs,
         train_batch_size=cfg.train_batch_size,
         val_batch_size=cfg.val_batch_size,
+        accumulate_grad_batches=cfg.get("accumulate_grad_batches", 1),
         random_seed=cfg.random_seed,
         logging_dir=cfg.logging_dir,
         resume_from_checkpoint=cfg.resume_from_checkpoint,

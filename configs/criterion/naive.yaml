@@ -5,10 +5,12 @@ matcher:
   class_cost: 0.5
   params_cost: 2.
 hits_generator:
-  _target_: src.postprocess.TracksFromParamsGenerator
-  params_normalizer: ${dataset.track_params_normalizer}
-  hits_normalizer: ${dataset.hits_normalizer}
-  n_stations: 35
+  _target_: src.postprocess.EventRecoveryFromPredictions
+  event_generator:
+    _target_: src.data_generation.SPDEventGenerator
+    max_event_tracks: ${dataset.max_event_tracks}
+    detector_eff: ${dataset.detector_efficiency}
+  track_params_normalizer: ${dataset.track_params_normalizer}
 num_classes: 1
 eos_coef: 0.2
 losses: ["labels", "params", "hits"]

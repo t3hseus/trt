@@ -30,6 +30,7 @@ class BatchSample(TypedDict):
     mask: torch.FloatTensor
     targets: torch.FloatTensor
     orig_params: torch.FloatTensor
+    n_tracks_per_sample: torch.LongTensor
 
 
 class SPDEventsDataset(Dataset):
@@ -37,6 +38,7 @@ class SPDEventsDataset(Dataset):
         self,
         n_samples: int = 100,
         max_event_tracks: int = 10,
+        generate_fixed_tracks_num: bool = True,
         add_fakes: bool = True,
         shuffle: bool = True,
         detector_eff: float = 0.98,
@@ -44,15 +46,16 @@ class SPDEventsDataset(Dataset):
         track_params_normalizer: Optional[TrackParamsNormalizer] = None,
         truncation_length: Optional[int] = None,
         fakes_label: int = -1,
-        padding_label: int = -1,
+        # padding_label: int = -1,
         mode: DatasetMode = DatasetMode.train,
     ):
         self._n_samples = n_samples
         self._max_event_tracks = max_event_tracks
         self._add_fakes = add_fakes
         self._fakes_label = fakes_label
-        self._padding_label = padding_label
+        # self._padding_label = padding_label
         self._shuffle = shuffle
+        self._generate_fixed_tracks_num = generate_fixed_tracks_num
 
         if truncation_length is not None and truncation_length > 0:
             self.truncation_length = truncation_length
@@ -60,6 +63,7 @@ class SPDEventsDataset(Dataset):
             self.truncation_length = None
 
         self.spd_gen = SPDEventGenerator(
+            generate_fixed_tracks_num=generate_fixed_tracks_num,
             max_event_tracks=max_event_tracks,
             add_fakes=add_fakes,
             detector_eff=detector_eff,
@@ -96,13 +100,20 @@ class SPDEventsDataset(Dataset):
         # charge -> categorical charge
         # charge=-1 -> (1  0) charge=1 -> (0  1);
         # theta -> theta raw, i.e. before arccos
-        params_shape = (self._max_event_tracks, 7)
+
+        # params_shape = (self._max_event_tracks, 7)
+        params_shape = (len(event.track_params), 7)
 
         params = np.zeros(params_shape, dtype=np.float32)
         orig_params = np.zeros(params_shape, dtype=np.float32)
-        param_labels = np.full(
-            self._max_event_tracks, self._padding_label, dtype=np.int32
+        # TODO: use only generated number of tracks without padding
+        # param_labels = np.full(
+        #     self._max_event_tracks, self._padding_label, dtype=np.int32
+        # )
+        param_labels = np.zeros(
+            len(event.track_params.items()), dtype=np.int32
         )
+
         for i, (track_id, track_params) in enumerate(event.track_params.items()):
             # normalize track parameters if needed
             if self.track_params_normalizer:
@@ -162,8 +173,10 @@ def collate_fn(samples: List[DatasetSample]) -> BatchSample:
     batch_inputs = np.zeros((batch_size, maxlen, n_features), dtype=np.float32)
     batch_mask = np.zeros((batch_size, maxlen), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
-    batch_targets = np.zeros((batch_size, *samples[0]["params"].shape))
-    batch_orig_params = np.zeros((batch_size, *samples[0]["orig_params"].shape))
+    batch_targets = np.zeros(
+        (batch_size, *samples[0]["params"].shape), dtype=np.float32)
+    batch_orig_params = np.zeros(
+        (batch_size, *samples[0]["orig_params"].shape), dtype=np.float32)
 
     for i, sample in enumerate(samples):
         batch_inputs[i, : len(sample["hits"])] = sample["hits"]
@@ -176,4 +189,37 @@ def collate_fn(samples: List[DatasetSample]) -> BatchSample:
         mask=torch.from_numpy(batch_mask),
         targets=torch.from_numpy(batch_targets),
         orig_params=torch.from_numpy(batch_orig_params),
+    )
+
+
+def collate_fn_for_set_loss(samples: List[DatasetSample]) -> BatchSample:
+    max_n_hits = max([len(sample["hits"]) for sample in samples])
+    n_tracks_per_sample = [len(sample["params"]) for sample in samples]
+    max_n_tracks = max(n_tracks_per_sample)
+    batch_size = len(samples)
+    n_features = samples[0]["hits"].shape[-1]
+
+    batch_inputs = np.zeros(
+        (batch_size, max_n_hits, n_features), dtype=np.float32
+    )
+    batch_mask = np.zeros((batch_size, max_n_hits), dtype=bool)
+    # params have the fixed size - MAX_TRACKS x N_PARAMS
+    target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
+    batch_targets = np.zeros(target_shape, dtype=np.float32)
+    batch_orig_params = np.zeros(target_shape, dtype=np.float32)
+
+    for i, sample in enumerate(samples):
+        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
+        batch_mask[i, :len(sample["hits"])] = sample["mask"]
+        batch_targets[i, :len(sample["params"])] = sample["params"]
+        batch_orig_params[
+            i, :len(sample["orig_params"])
+        ] = sample["orig_params"]
+
+    return BatchSample(
+        inputs=torch.from_numpy(batch_inputs),
+        mask=torch.from_numpy(batch_mask),
+        targets=torch.from_numpy(batch_targets),
+        orig_params=torch.from_numpy(batch_orig_params),
+        n_tracks_per_sample=torch.LongTensor(n_tracks_per_sample)
     )

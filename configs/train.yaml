@@ -1,4 +1,5 @@
 defaults:
+  - _self_
   - model: base
   - criterion: naive
   - user_settings: user_settings
@@ -17,16 +18,17 @@ hydra:
     subdir: ${hydra.job.num}
 
 
-num_epochs: 2000
+num_epochs: 20
 train_batch_size: 16
 val_batch_size: 16
 random_seed: 42
 logging_dir: ${hydra_dir}
-resume_from_checkpoint: r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
-num_workers: 0
+resume_from_checkpoint: None
+num_workers: 4
 pin_memory: False
 
 metrics:
+# TODO: rewrite metrics to more useful ones
   - _target_: src.loss.MatchingLoss
     _recursive_: True
     matcher:
@@ -34,10 +36,13 @@ metrics:
       class_cost: 1.
       params_cost: 1.
     hits_generator:
-      _target_: src.postprocess.TracksFromParamsGenerator
-      params_normalizer: ${dataset.track_params_normalizer}
-      hits_normalizer: ${dataset.hits_normalizer}
-      n_stations: 35
+      _target_: src.postprocess.EventRecoveryFromPredictions
+      event_generator:
+        _target_: src.data_generation.SPDEventGenerator
+        max_event_tracks: ${dataset.max_event_tracks}
+        detector_eff: ${dataset.detector_efficiency}
+      track_params_normalizer: ${dataset.track_params_normalizer}
+
     num_classes: 1
     eos_coef: 0.2
     losses: ["labels"]
@@ -49,10 +54,12 @@ metrics:
       class_cost: 1.
       params_cost: 1.
     hits_generator:
-      _target_: src.postprocess.TracksFromParamsGenerator
-      params_normalizer: ${dataset.track_params_normalizer}
-      hits_normalizer: ${dataset.hits_normalizer}
-      n_stations: 35
+      _target_: src.postprocess.EventRecoveryFromPredictions
+      event_generator:
+        _target_: src.data_generation.SPDEventGenerator
+        max_event_tracks: ${dataset.max_event_tracks}
+        detector_eff: ${dataset.detector_efficiency}
+      track_params_normalizer: ${dataset.track_params_normalizer}
     num_classes: 1
     eos_coef: 0.2
     losses: [ "params" ]
@@ -64,10 +71,12 @@ metrics:
       class_cost: 1.
       params_cost: 1.
     hits_generator:
-      _target_: src.postprocess.TracksFromParamsGenerator
-      params_normalizer: ${dataset.track_params_normalizer}
-      hits_normalizer: ${dataset.hits_normalizer}
-      n_stations: 35
+      _target_: src.postprocess.EventRecoveryFromPredictions
+      event_generator:
+        _target_: src.data_generation.SPDEventGenerator
+        max_event_tracks: ${dataset.max_event_tracks}
+        detector_eff: ${dataset.detector_efficiency}
+      track_params_normalizer: ${dataset.track_params_normalizer}
     num_classes: 1
     eos_coef: 0.2
     losses: [ "hits" ]

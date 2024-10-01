@@ -10,7 +10,8 @@ class PointTransformerEncoder(nn.Module):
         # channels = int(n_points / 4)
         self.conv1 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
         self.conv2 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
+        self.conv3 = nn.Conv1d(channels * 4, channels,
+                               kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(channels)
         self.bn2 = nn.BatchNorm1d(channels)
         self.norm1 = nn.LayerNorm(channels)
@@ -65,7 +66,8 @@ class SALayer(nn.Module):
         energy = torch.bmm(x_q, x_k)  # why not normalization?
         d = energy.shape[-2]
         if mask is not None:
-            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
+            mask = torch.bitwise_and(
+                mask[:, :, None].bool(), mask[:, None, :].bool())
             energy = energy.masked_fill(mask == 0, -9e15)
             d = 1e-9 + mask.sum(dim=1, keepdim=True)
         energy = energy / d
@@ -113,7 +115,8 @@ class JointAttentionLayer(nn.Module):
         energy = torch.bmm(x_q, x_k)  # why not normalization?
         d = energy.shape[-2]
         if mask is not None:
-            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
+            mask = torch.bitwise_and(
+                mask[:, :, None].bool(), mask[:, None, :].bool())
             energy = energy.masked_fill(mask == 0, -9e15)
             d = 1e-9 + mask.sum(dim=1, keepdim=True)
         energy = energy / d
@@ -228,7 +231,7 @@ class TRT(nn.Module):
         self.decoder = PCTDetectDecoder(
             channels=channels, dim_feedforward=channels // 2, nhead=2, dropout=dropout
         )
-        self.class_head = nn.Linear(channels, num_classes + 1)
+        # self.class_head = nn.Linear(channels, num_classes + 1)
 
         self.params_head = nn.Sequential(
             nn.Linear(channels, num_out_params * 2, bias=False),
@@ -256,16 +259,18 @@ class TRT(nn.Module):
         x = self.emb_encoder(inputs)
         x_encoder = self.encoder(x, mask=mask)
         # decoder transformer
-        query_pos_embed = self.query_embed.weight.unsqueeze(0).repeat(batch_size, 1, 1)
+        query_pos_embed = self.query_embed.weight.unsqueeze(
+            0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(x_encoder, x_decoder, query_pos_embed, mask=mask)
-        outputs_class = self.class_head(x)  # no sigmoid, plain logits!
+        # outputs_class = self.class_head(x)  # no sigmoid, plain logits!
+        # TODO: I'd rather use no activation
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
         return {
-            "logits": outputs_class,
+            # "logits": outputs_class,
             "params": outputs_coord,
         }
 
