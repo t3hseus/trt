@@ -62,7 +62,7 @@ def index_points(points, idx):
     return new_points
 
 
-def farthest_point_sample(xyz, npoint):
+def farthest_point_sample(xyz, npoint, pad_mask=None):
     """
     Input:
         xyz: pointcloud data, [B, N, 3]
@@ -74,7 +74,11 @@ def farthest_point_sample(xyz, npoint):
     B, N, C = xyz.shape
     centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
     distance = torch.ones(B, N).to(device) * 1e10
+    if pad_mask is not None:
+        distance[pad_mask] = -1
     farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    # 1: add masking to remove padding point
+    # 2: How 3d point cloud deal with different sizes of clouds?
     batch_indices = torch.arange(B, dtype=torch.long).to(device)
     for i in range(npoint):
         centroids[:, i] = farthest
@@ -191,7 +195,9 @@ class PointNetSetAbstraction(nn.Module):
         if self.group_all:
             new_xyz, new_points = sample_and_group_all(xyz, points)
         else:
-            new_xyz, new_points = sample_and_group(self.npoint, self.radius, self.nsample, xyz, points)
+            new_xyz, new_points = sample_and_group(
+                self.npoint, self.radius, self.nsample, xyz, points
+            )
         # new_xyz: sampled points position data, [B, npoint, C]
         # new_points: sampled points data, [B, npoint, nsample, C+D]
         new_points = new_points.permute(0, 3, 2, 1) # [B, C+D, nsample,npoint]
