@@ -138,7 +138,7 @@ class TrackParamsNormalizer:
         orig_theta = self.minmax_denorm(norm_params_vector[5], 0, pi)
         # from categorical (0, 1) to (-1, 1)
         if is_charge_categorical:
-            orig_charge = norm_params_vector[6] * 2 - 1
+            orig_charge = (norm_params_vector[6] > 0.5) * 2 - 1
         else:
             orig_charge = norm_params_vector[6]
         if is_numpy:

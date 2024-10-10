@@ -58,7 +58,7 @@ class TorchTrackGenerator:
         for i, params_vector in enumerate(params):
             temp_params = self.params_normalizer.denormalize(
                 norm_params_vector=params_vector,
-                is_charge_categorical=False,
+                is_charge_categorical=True,
                 is_numpy=False,
             )
             params = TorchTrackParams(
