@@ -20,8 +20,7 @@ def criterion(preds, targets, preds_lengths, targets_lengths):
     hungarian = torch.tensor(0.0)
     for i in range(preds.shape[0]):
         hungarian += hungarian_loss_with_match(
-            preds[i, :preds_lengths[i]],
-            targets[i, :targets_lengths[i]]
+            preds[i, : preds_lengths[i]], targets[i, : targets_lengths[i]]
         )
     hungarian /= preds.shape[0]  # batchmean
     return hungarian
@@ -41,8 +40,10 @@ def adjust_targets(row_ind, col_ind, targets, num_candidates=10):
         adjusted_targets: Target labels with shape num_candidates, where unmatched candidates get label 1.
     """
     # Initialize adjusted logits and targets
-    #adjusted_logits = logits  #.clone()  # Copy logits
-    adjusted_targets = torch.ones(num_candidates, dtype=torch.long, device=targets.device)
+    # adjusted_logits = logits  #.clone()  # Copy logits
+    adjusted_targets = torch.ones(
+        num_candidates, dtype=torch.long, device=targets.device
+    )
     # Default label is 1 for unmatched candidates
 
     # For each matched pair, assign the corresponding target
@@ -53,7 +54,7 @@ def adjust_targets(row_ind, col_ind, targets, num_candidates=10):
     return adjusted_targets
 
 
-def focal_loss(logits, targets, alpha=1, gamma=2, reduction='mean'):
+def focal_loss(logits, targets, alpha=1, gamma=2, reduction="mean"):
     """
     Args:
         logits: Predictions for each class with shape [B, N, C] where C is the number of classes (raw logits, not softmaxed).
@@ -77,9 +78,9 @@ def focal_loss(logits, targets, alpha=1, gamma=2, reduction='mean'):
     loss = -alpha * (1 - probs_target_class) ** gamma * log_pt  # Focal loss equation
 
     # Apply the reduction
-    if reduction == 'mean':
+    if reduction == "mean":
         return loss.mean()
-    elif reduction == 'sum':
+    elif reduction == "sum":
         return loss.sum()
     else:
         return loss  # No reduction
@@ -87,9 +88,7 @@ def focal_loss(logits, targets, alpha=1, gamma=2, reduction='mean'):
 
 def match_targets(outputs, targets):
     cost_matrix = torch.cdist(outputs, targets, p=1)
-    row_ind, col_ind = linear_sum_assignment(
-        cost_matrix.cpu().detach().numpy()
-    )
+    row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
 
 
@@ -104,58 +103,64 @@ def hungarian_loss(outputs, targets, distance: Callable, num_params: int = 7):
 
 class TRTHungarianLoss(nn.Module):
     def __init__(
-            self,
-            distance: Callable = F.l1_loss,
-            class_loss: Callable = F.cross_entropy,
-            weights: tuple[float, float, float] = (1, 1, 1),
-            intermediate: bool = False
+        self,
+        distance: Callable = F.l1_loss,
+        class_loss: Callable = F.cross_entropy,
+        weights: tuple[float, float, float] = (1, 1, 1),
+        intermediate: bool = False,
+        params_with_vertex: bool = False,
     ):
         super().__init__()
         self.intermediate = intermediate
         self._distance = distance
         self._class_loss = class_loss
         self._weights = weights
+        self.params_with_vertex = params_with_vertex
 
     def _calc_loss(
-            self,
-            pred_params, target_params,
-            preds_lengths, targets_lengths,
-            pred_logits, target_labels,
-            batch_size
+        self,
+        pred_params,
+        target_params,
+        preds_lengths,
+        targets_lengths,
+        pred_logits,
+        target_labels,
+        batch_size,
     ):
         hungarian = torch.tensor(0.0).to(pred_params.device)
         label_loss = torch.tensor(0.0).to(pred_params.device)
+        if not self.params_with_vertex:
+            target_params_in = target_params[..., 3:]
+        else:
+            target_params_in = target_params
         for i in range(batch_size):
             row_ind, col_ind = match_targets(
-                pred_params[i, :preds_lengths[i]],
-                target_params[i, :targets_lengths[i]])
+                pred_params[i, : preds_lengths[i]],
+                target_params_in[i, : targets_lengths[i]],
+            )
             matched_outputs = pred_params[i, row_ind]
-            matched_targets = target_params[i, col_ind]
+            matched_targets = target_params_in[i, col_ind]
             hungarian += hungarian_loss(
-                matched_outputs,
-                matched_targets,
-                distance=self._distance
+                matched_outputs, matched_targets, distance=self._distance
             )
             matched_targets = adjust_targets(
                 row_ind,
                 col_ind,
-                target_labels[i, :targets_lengths[i]],
-                num_candidates=pred_logits.shape[1]
+                target_labels[i, : targets_lengths[i]],
+                num_candidates=pred_logits.shape[1],
             )
             label_loss += class_loss(
-                pred_logits[i],
-                matched_targets,
-                loss_fn=self._class_loss
+                pred_logits[i], matched_targets, loss_fn=self._class_loss
             )
+
         return hungarian, label_loss
 
     def forward(
-            self,
-            preds: dict[str, torch.Tensor],
-            targets: dict[str, torch.Tensor],
-            preds_lengths,
-            targets_lengths,
-
+        self,
+        preds: dict[str, torch.Tensor],
+        targets: dict[str, torch.Tensor],
+        preds_lengths,
+        targets_lengths,
     ):
         batch_size = preds["params"].shape[0]
         pred_logits = preds["logits"]
@@ -164,29 +169,38 @@ class TRTHungarianLoss(nn.Module):
         target_labels = targets["labels"]
         if not self.intermediate:
             hungarian, label_loss = self._calc_loss(
-                pred_params, target_params,
-                preds_lengths, targets_lengths,
-                pred_logits, target_labels,
-                batch_size
+                pred_params,
+                target_params,
+                preds_lengths,
+                targets_lengths,
+                pred_logits,
+                target_labels,
+                batch_size,
             )
         else:
-            hungarian = torch.tensor(0.).to(pred_params.device)
-            label_loss = torch.tensor(0.).to(pred_params.device)
+            hungarian = torch.tensor(0.0).to(pred_params.device)
+            label_loss = torch.tensor(0.0).to(pred_params.device)
             for step in range(pred_params.shape[0]):
                 hungarian_step, label_loss_step = self._calc_loss(
-                    pred_params[step], target_params,
-                    preds_lengths, targets_lengths,
-                    pred_logits[step], target_labels,
-                    batch_size
+                    pred_params[step],
+                    target_params,
+                    preds_lengths,
+                    targets_lengths,
+                    pred_logits[step],
+                    target_labels,
+                    batch_size,
                 )
                 hungarian += hungarian_step
                 label_loss += label_loss_step
-
         vertex_loss = vertex_distance(preds["vertex"].unsqueeze(1), targets["targets"])
         hungarian /= batch_size  # batchmean
         label_loss /= batch_size  # batchmean
         vertex_loss /= batch_size
-        return self._weights[0] * hungarian + self._weights[1] * label_loss + self._weights[2] * vertex_loss
+        return (
+            self._weights[0] * hungarian
+            + self._weights[1] * label_loss
+            + self._weights[2] * vertex_loss
+        )
 
 
 def class_loss(outputs, targets, loss_fn: Callable):

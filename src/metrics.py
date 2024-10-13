@@ -26,7 +26,7 @@ def match_targets(outputs, targets):
 
 
 def vertex_distance(outputs, targets):
-    vertex_out = outputs[:, 0, :3]
+    #vertex_out = outputs[:, 0, :3]
     vertex_target = targets[:, 0, :3]
-    return torch.nn.functional.l1_loss(vertex_out, vertex_target) * 3
+    return torch.nn.functional.l1_loss(outputs.squeeze(), vertex_target) * 3
 

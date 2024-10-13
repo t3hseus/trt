@@ -377,22 +377,25 @@ class TRTHybrid(nn.Module):
             nn.Dropout(p=dropout)
         )
         self.params_head = nn.Sequential(
-            nn.Linear(channels, num_out_params * 2, bias=False),
+            nn.Linear(channels, channels // 2, bias=False),
             nn.Dropout(p=dropout),
             nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(num_out_params * 2, num_out_params-3, bias=False),
+            nn.Linear(channels // 2, num_out_params-3, bias=False),
             nn.Dropout(p=dropout),
             nn.LeakyReLU(negative_slope=0.2),
         )
-
+        self.pool = nn.AdaptiveAvgPool1d(1)
         self.vertex_head = nn.Sequential(
-            nn.Linear(channels, 3, bias=False), # num of vertex elements
+            nn.Linear(channels, channels*2), # num of vertex elements
             nn.Dropout(p=dropout),
-            nn.LeakyReLU(negative_slope=0.2)
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(channels*2, 3),  # num of vertex elements
+            # nn.Dropout(p=dropout),
+            # nn.LeakyReLU(negative_slope=0.2)
         )
 
     def forward(
-            self, inputs, mask=None, orig_params=None
+            self, inputs, mask=None, return_params_with_vertex: bool = False
     ) -> dict[str, torch.Tensor]:
         """
         It returns a dict with the following elements:
@@ -414,9 +417,12 @@ class TRTHybrid(nn.Module):
 
         x = self.emb_encoder(inputs)
         x_encoder = self.encoder(x, mask=mask)
-        global_feature = x_encoder.mean(dim=-1)
 
-        # decoder transformer
+        global_feature = x_encoder.mean(dim=-1)
+        #for i in range(len(x_encoder)):
+        #    global_feature[i] = x_encoder[i][mask[i].unsqueeze(0).repeat(x_encoder[i].shape[0], 1)].mean(dim=-1)
+
+            # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(
             0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
@@ -433,13 +439,15 @@ class TRTHybrid(nn.Module):
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
+        global_feature = global_feature.squeeze()
+        outputs_vertex = self.vertex_head(global_feature) # sigmoid()
 
-        outputs_vertex = self.vertex_head(global_feature)
-        vertex = outputs_vertex.unsqueeze(-2).expand(-1, outputs_coord.shape[-2], -1)
-        if self.return_intermediate:
-            vertex = vertex.unsqueeze(0).expand(outputs_coord.shape[0], -1, -1, -1)
-        outputs_coord = torch.cat((vertex, outputs_coord), dim=-1)
-
+        if return_params_with_vertex:
+            # for evaluation (to hide concatenation to
+            vertex = outputs_vertex.unsqueeze(-2).expand(-1, outputs_coord.shape[-2], -1)
+            if self.return_intermediate:
+                vertex = vertex.unsqueeze(0).expand(outputs_coord.shape[0], -1, -1, -1)
+            outputs_coord = torch.cat((vertex, outputs_coord), dim=-1)
         return {
             "logits": outputs_class,
             "params": outputs_coord,
