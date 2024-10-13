@@ -1,20 +1,32 @@
+import torch
+from scipy.optimize import linear_sum_assignment
 from torch import nn
+from torch.nn import L1Loss
 
 
-class ParamDiff(nn.Module):
-    def __init__(self, param_pos: int = 0):
-        super().__init__()
-        self.param_pos = param_pos
+def cardinality_error(
+        pred_tracks, pred_logits, target_tracks, threshold: float=0.5
+) -> int:
+    pred_tracks = pred_tracks[pred_logits > threshold]
+    return len(pred_tracks) - len(target_tracks)
 
-    def forward(self, preds, targets):
-        return preds[:, :, self.param_pos] - targets[:, :, self.param_pos]
+def hits_distance(
+        pred_tracks, pred_logits, target_tracks, threshold: float=0.5
+) -> int:
+    pred_tracks = pred_tracks[pred_logits > threshold]
+    return len(pred_tracks) - len(target_tracks)
 
 
-class Accuracy(nn.Module):
-    def __init__(self, threshold: float = 1e-6):
-        super().__init__()
-        self.threshold = threshold
+def match_targets(outputs, targets):
+    cost_matrix = torch.cdist(outputs, targets, p=1)
+    row_ind, col_ind = linear_sum_assignment(
+        cost_matrix.cpu().detach().numpy()
+    )
+    return row_ind, col_ind
 
-    def forward(self, preds, targets):
-        se = nn.functional.mse_loss(preds, targets, reduce=False)
-        return (se < self.threshold).sum() / len(se)
+
+def vertex_distance(outputs, targets):
+    vertex_out = outputs[:, 0, :3]
+    vertex_target = targets[:, 0, :3]
+    return torch.nn.functional.l1_loss(vertex_out, vertex_target) * 3
+

@@ -343,6 +343,7 @@ class TRTHybrid(nn.Module):
         nhead: int = 2,
         num_classes: int = 1,
         num_out_params: int = 7,
+        return_intermediate=False
     ):
         super().__init__()
         channels = n_points // 4
@@ -350,6 +351,7 @@ class TRTHybrid(nn.Module):
         self.initial_permute = initial_permute
         self.d_model = channels
         self.nhead = nhead
+        self.return_intermediate = return_intermediate
         self.emb_encoder = nn.Sequential(
             nn.Conv1d(input_channels, channels, kernel_size=1, bias=False),
             nn.BatchNorm1d(channels),
@@ -367,7 +369,8 @@ class TRTHybrid(nn.Module):
             channels=channels,
             dim_feedforward=channels // 2,
             nhead=2,
-            dropout=dropout
+            dropout=dropout,
+            return_intermediate=return_intermediate
         )
         self.class_head = nn.Sequential(
             nn.Linear(channels, num_classes + 1),
@@ -377,9 +380,15 @@ class TRTHybrid(nn.Module):
             nn.Linear(channels, num_out_params * 2, bias=False),
             nn.Dropout(p=dropout),
             nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(num_out_params * 2, num_out_params, bias=False),
+            nn.Linear(num_out_params * 2, num_out_params-3, bias=False),
             nn.Dropout(p=dropout),
             nn.LeakyReLU(negative_slope=0.2),
+        )
+
+        self.vertex_head = nn.Sequential(
+            nn.Linear(channels, 3, bias=False), # num of vertex elements
+            nn.Dropout(p=dropout),
+            nn.LeakyReLU(negative_slope=0.2)
         )
 
     def forward(
@@ -405,6 +414,8 @@ class TRTHybrid(nn.Module):
 
         x = self.emb_encoder(inputs)
         x_encoder = self.encoder(x, mask=mask)
+        global_feature = x_encoder.mean(dim=-1)
+
         # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(
             0).repeat(batch_size, 1, 1)
@@ -422,9 +433,17 @@ class TRTHybrid(nn.Module):
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
+
+        outputs_vertex = self.vertex_head(global_feature)
+        vertex = outputs_vertex.unsqueeze(-2).expand(-1, outputs_coord.shape[-2], -1)
+        if self.return_intermediate:
+            vertex = vertex.unsqueeze(0).expand(outputs_coord.shape[0], -1, -1, -1)
+        outputs_coord = torch.cat((vertex, outputs_coord), dim=-1)
+
         return {
             "logits": outputs_class,
             "params": outputs_coord,
+            "vertex": outputs_vertex,
         }
 
 

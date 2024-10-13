@@ -5,7 +5,8 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-from .constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
+from src.data_generation import TrackParams, Vertex
+from src.constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
 
 DType = TypeVar("DType", bound=np.generic)
 NormTParamsArr = Annotated[npt.NDArray[DType], Literal[8]]
@@ -151,3 +152,13 @@ class TrackParamsNormalizer:
                 [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge]
             )
         return params_vector
+
+
+if __name__ == "__main__":
+    p = TrackParams(phi=5.9388142319757575, theta=0.7744413183107033, pt=946.6066686063032, charge=-1)
+    v = Vertex(x=-0.705010350151656, y=-18.174579211083792, z=44.13365795124486)
+    normalizer = TrackParamsNormalizer()
+    n_params = normalizer.normalize(vx=v.x, vy=v.y, vz=v.z, pt=p.pt, phi=p.phi, theta=p.theta, charge=p.charge)
+    params = normalizer.denormalize(n_params)
+    print(params[0]-v.x, params[1]-v.y, params[2]-v.z)
+    print(params[3] - p.pt, params[4] - p.phi, params[5] - p.theta, params[6] - p.charge)
