@@ -1,9 +1,6 @@
 import copy
-
-import gin
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
 
 
 class PointTransformerEncoder(nn.Module):
@@ -89,111 +86,6 @@ class SALayer(nn.Module):
             .masked_fill(mask == 1, float(0.0))
         )
         return mask
-
-
-class JointAttentionLayer(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.q_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.k_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.q_conv.weight = self.k_conv.weight
-        self.q_conv.bias = self.k_conv.bias
-
-        self.v_conv = nn.Conv1d(channels, channels, 1)
-        self.trans_conv = nn.Conv1d(channels, channels, 1)
-        self.after_norm = nn.BatchNorm1d(channels)  # why not layer norm?
-        self.act = nn.ReLU()
-        self.softmax = nn.Softmax(dim=-1)
-
-    def forward(self, x: torch.Tensor, query: torch.Tensor, mask: torch.Tensor = None):
-        # b, n, c
-        x_q = self.q_conv(query).permute(0, 2, 1)  # do we need permute or not?
-        # b, c, n
-        x_k = self.k_conv(x)
-        x_v = self.v_conv(x)
-        # b, n, n
-        energy = torch.bmm(x_q, x_k)  # why not normalization?
-        d = energy.shape[-2]
-        if mask is not None:
-            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
-            energy = energy.masked_fill(mask == 0, -9e15)
-            d = 1e-9 + mask.sum(dim=1, keepdim=True)
-        energy = energy / d
-        attention = self.softmax(energy)  # need normalization!!?
-        # b, c, n
-        x_r = torch.bmm(x_v, attention)
-        x_r = self.act(self.after_norm(self.trans_conv(x - x_r)))
-        x = x + x_r
-        return x
-
-    @staticmethod
-    def _generate_square_subsequent_mask(sequence_mask):
-        mask = (torch.triu(torch.ones(sequence_mask, sequence_mask)) == 1).transpose(
-            0, 1
-        )
-        mask = (
-            mask.float()
-            .masked_fill(mask == 0, float("-inf"))
-            .masked_fill(mask == 1, float(0.0))
-        )
-        return mask
-
-
-class PCTDetectDecoder(nn.Module):
-    def __init__(self, channels=128, dim_feedforward=64, nhead=2, dropout=0.2):
-        super().__init__()
-
-        self.sa1 = nn.MultiheadAttention(
-            channels, nhead, dropout=dropout, batch_first=True
-        )
-        self.multihead_attn = nn.MultiheadAttention(
-            channels, nhead, dropout=dropout, batch_first=True
-        )
-
-        self.linear1 = nn.Linear(channels, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, channels)
-
-        self.norm1 = nn.LayerNorm(channels)
-        self.norm2 = nn.LayerNorm(channels)
-        self.norm3 = nn.LayerNorm(channels)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.activation = torch.nn.functional.leaky_relu  # gelu, leaky_relu etc
-
-    def forward(
-        self,
-        x_encoder: torch.Tensor,
-        x_decoder: torch.Tensor,
-        object_pos_emb: torch.Tensor,
-        mask: torch.Tensor = None,
-    ):
-
-        # permute reshape
-        batch_size, _, _ = x_encoder.size()
-        x_encoder = x_encoder.permute(0, 2, 1)
-        # B, D, N
-        # self-attention, add + norm for query_embeddings
-        q = k = x_decoder + object_pos_emb
-        mask = ~mask
-        x_att = self.sa1(q, k, value=x_decoder)[0]
-        x1 = self.norm1(x_decoder + self.dropout1(x_att))
-
-        # combine with encoder output! (attention + add+norm
-        x_att = self.multihead_attn(
-            query=(x1 + object_pos_emb),
-            key=x_encoder,
-            value=x_encoder,
-            key_padding_mask=mask,
-        )[0]
-        x1 = self.norm2(x1 + self.dropout2(x_att))
-        # fpn on top of layer
-        x2 = self.linear2(self.dropout(self.activation(self.linear1(x1))))
-        x1 = x1 + self.dropout3(x2)
-        x1 = self.norm3(x1)
-        return x1
 
 
 class TRTDetectDecoder(nn.Module):
@@ -453,7 +345,6 @@ class TRTHybrid(nn.Module):
             "params": outputs_coord,
             "vertex": outputs_vertex,
         }
-
 
 
 if __name__ == "__main__":
