@@ -3,7 +3,7 @@ import torch
 from omegaconf import OmegaConf, DictConfig
 from torch import nn
 
-from src.matcher import HungarianMatcher
+from src.deprecated.matcher import HungarianMatcher
 from src.postprocess import TorchTrackGenerator, EventRecoveryFromPredictions
 
 

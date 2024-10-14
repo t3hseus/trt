@@ -14,10 +14,11 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn, optim
 from torch.utils.data import DataLoader
 
-from src.dataset import DatasetMode, SPDEventsDataset, collate_fn
+from src.dataset import DatasetMode, SPDEventsDataset
+from src.deprecated.dataset import collate_fn
 from src.logging_utils import setup_logger
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.training import TrainModel
+from src.deprecated.training import TrainModel
 
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
@@ -139,7 +140,7 @@ def experiment(
     )
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="train")
+@hydra.main(version_base=None, config_path="../../configs", config_name="train")
 def main(cfg: DictConfig):
     LOGGER.info("Starting basic objects instantiate")
     model = instantiate(cfg.model)

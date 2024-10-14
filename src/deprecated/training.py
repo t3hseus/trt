@@ -15,9 +15,9 @@ from pathlib import Path
 from PIL import Image
 from torch import optim
 
-from .dataset import BatchSample
-from .visualization import draw_event
-from .utils import get_latest_checkpoint
+from src.dataset import BatchSample
+from src.visualization import draw_event
+from src.utils import get_latest_checkpoint
 
 
 class TrainModel(pl.LightningModule):
