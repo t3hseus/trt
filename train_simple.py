@@ -14,7 +14,7 @@ from src.dataset import (DatasetMode, SPDEventsDataset,
 from src.metrics import vertex_distance
 from src.model_hybrid import TRTHybrid
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.simple.loss import TRTHungarianLoss
+from src.loss import TRTHungarianLoss
 
 seed_everything(13)
 
