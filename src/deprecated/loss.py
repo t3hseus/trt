@@ -4,7 +4,7 @@ from omegaconf import OmegaConf, DictConfig
 from torch import nn
 
 from src.deprecated.matcher import HungarianMatcher
-from src.postprocess import TorchTrackGenerator, EventRecoveryFromPredictions
+from src.deprecated.postprocess import TorchTrackGenerator, EventRecoveryFromPredictions
 
 
 class MatchingLoss(nn.Module):

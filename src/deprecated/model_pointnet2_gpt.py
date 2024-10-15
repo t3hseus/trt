@@ -1,11 +1,9 @@
 import copy
 
-import gin
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
 
-from src.pointnet.pointnet2 import PointNet2
+from src.deprecated.pointnet.pointnet2 import PointNet2
 
 
 class PointTransformerEncoder(nn.Module):

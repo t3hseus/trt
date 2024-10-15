@@ -5,7 +5,7 @@ https://github.com/yanx27/Pointnet_Pointnet2_pytorch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-from src.pointnet.pointnet_utils import (
+from src.deprecated.pointnet.pointnet_utils import (
     PointNetSetAbstraction,
     PointNetFeaturePropagation,
 )
