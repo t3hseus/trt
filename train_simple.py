@@ -18,12 +18,12 @@ from src.loss import TRTHungarianLoss
 
 seed_everything(13)
 
-MAX_EVENT_TRACKS = 10
+MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
-TRUNCATION_LENGTH = 1024
+TRUNCATION_LENGTH = 512
 BATCH_SIZE = 64
-NUM_EVENTS_TRAIN = 16  # 50000
-NUM_EVENTS_VALID = 16  # 10000
+NUM_EVENTS_TRAIN = 64
+NUM_EVENTS_VALID = 64
 INTERMEDIATE = False
 
 
@@ -53,11 +53,11 @@ def main():
         num_out_params=7,
         return_intermediate=INTERMEDIATE,
     ).to(device)
-    criterion = TRTHungarianLoss(weights=(0, 0, 20), intermediate=INTERMEDIATE).to(
+    criterion = TRTHungarianLoss(weights=(1, 0.5, 1), intermediate=INTERMEDIATE).to(
         device
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.00001, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.00001, weight_decay=0.00001)
     progress_bar = tqdm(range(5000))
     min_loss_train = min_loss_val = 1e5
     for epoch in progress_bar:
@@ -231,7 +231,7 @@ def val_epoch(
     val_loss = 0
     num_val_batches = 0
     model.eval()
-    params_only_dist = TRTHungarianLoss(weights=(1, 0.0, 0.0), intermediate=False).to(
+    params_only_dist = TRTHungarianLoss(weights=(1., 0.0, 0.0), intermediate=False).to(
         device
     )
     for batch in val_loader:

@@ -192,10 +192,10 @@ class TRTHungarianLoss(nn.Module):
                 )
                 hungarian += hungarian_step
                 label_loss += label_loss_step
+        hungarian /= batch_size
+        label_loss /= batch_size
+
         vertex_loss = vertex_distance(preds["vertex"].unsqueeze(1), targets["targets"])
-        hungarian /= batch_size  # batchmean
-        label_loss /= batch_size  # batchmean
-        vertex_loss /= batch_size
         return (
             self._weights[0] * hungarian
             + self._weights[1] * label_loss
@@ -205,3 +205,21 @@ class TRTHungarianLoss(nn.Module):
 
 def class_loss(outputs, targets, loss_fn: Callable):
     return loss_fn(outputs, targets)
+
+if __name__ == "__main__":
+    loss = TRTHungarianLoss()
+    preds_coord = torch.rand((16, 25, 4))
+    preds_vertex = torch.rand((16, 3))
+    preds_labels = torch.rand((16, 25, 2))
+    targets = torch.rand((16, 10, 7))
+    preds_coord[:, :10] = targets[:, :, 3:]
+    target_vertex = torch.rand((8, 3)).unsqueeze(1).repeat(1, 10, 1)
+    target_vertex_1 = preds_vertex[8:, :].unsqueeze(1).repeat(1, 10, 1)
+    targets[:8, :, :3] = target_vertex
+    targets[8:, :, :3] = target_vertex_1
+    target_labels = torch.ones((16, 10), dtype=torch.long)
+    target_lengths = [10 for i in range(16)]
+    pred_lengths = [25 for i in range(16)]
+    preds = {"params": preds_coord, "vertex": preds_vertex, "logits": preds_labels}
+    targets = {"targets": targets, "labels": target_labels}
+    loss_val = loss(preds, targets, preds_lengths=pred_lengths, targets_lengths=target_lengths)

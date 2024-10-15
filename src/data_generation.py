@@ -328,8 +328,8 @@ class SPDEventGenerator:
 
         hits, momentums = [], []
         track_params = TrackParams(
-            pt=np.random.uniform(100, 1000),  # MeV / c
-            phi=np.random.uniform(0, 2 * np.pi),
+            pt=np.float32(np.random.uniform(100, 1000)),  # MeV / c
+            phi=np.float32(np.random.uniform(0, 2 * np.pi)),
             theta=np.arccos(np.random.uniform(-1, 1)),
             charge=np.random.choice([-1, 1]).astype("int8"),
         )
@@ -341,7 +341,6 @@ class SPDEventGenerator:
                 Rc=r,
                 magnetic_field=self.magnetic_field,
             )
-
             if (point.x, point.y, point.z) == (0, 0, 0):
                 continue
 
@@ -397,9 +396,9 @@ class SPDEventGenerator:
             add_fakes = self.add_fakes
 
         vertex = Vertex(
-            x=np.random.normal(*self.vx_range),
-            y=np.random.normal(*self.vy_range),
-            z=np.random.uniform(*self.vz_range),
+            x=np.float32(np.random.normal(*self.vx_range)),
+            y=np.float32(np.random.normal(*self.vy_range)),
+            z=np.float32(np.random.uniform(*self.vz_range)),
         )
         if self.generate_fixed_tracks_num:
             n_tracks = self.max_event_tracks
