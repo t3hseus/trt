@@ -7,8 +7,7 @@ class PointTransformerEncoder(nn.Module):
     def __init__(self, channels=128):
         super().__init__()
         # channels = int(n_points / 4)
-        self.conv1 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        self.conv2 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
+
         self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(channels)
         self.bn2 = nn.BatchNorm1d(channels)
@@ -245,22 +244,23 @@ class TRTHybrid(nn.Module):
         self.nhead = nhead
         self.return_intermediate = return_intermediate
         self.emb_encoder = nn.Sequential(
-            nn.Conv1d(input_channels, channels, kernel_size=1, bias=False),
+            nn.Conv1d(input_channels, channels // 2, kernel_size=1),
+            nn.BatchNorm1d(channels // 2),
+            nn.ReLU(),
+            nn.Conv1d(channels // 2, channels, 1),
             nn.BatchNorm1d(channels),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Conv1d(channels, channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(channels),
-            nn.LeakyReLU(negative_slope=0.2),
-        )
+            nn.ReLU()
+        )  # MLP (pointwise embedding)
         self.encoder = PointTransformerEncoder(channels=channels)
 
         self.query_embed = nn.Embedding(
-            num_embeddings=num_candidates, embedding_dim=channels
+            num_embeddings=num_candidates, embedding_dim=channels,
         )
         self.decoder = TRTDetectDecoder(
             channels=channels,
+            num_layers=2,
             dim_feedforward=channels // 2,
-            nhead=2,
+            nhead=1,
             dropout=dropout,
             return_intermediate=return_intermediate
         )
@@ -278,13 +278,14 @@ class TRTHybrid(nn.Module):
         )
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.vertex_head = nn.Sequential(
-            nn.Linear(channels, channels*2), # num of vertex elements
+            nn.Linear(channels, channels), # num of vertex elements
+            nn.BatchNorm1d(channels),
+            nn.ReLU(),
             nn.Dropout(p=dropout),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels*2, 3),  # num of vertex elements
-            # nn.Dropout(p=dropout),
-            # nn.LeakyReLU(negative_slope=0.2)
-        )
+            nn.Linear(channels, 3),  # num of vertex elements
+            nn.BatchNorm1d(3),
+            nn.ReLU()
+        )  # vertex head is a global head.
 
     def forward(
             self, inputs, mask=None, return_params_with_vertex: bool = False
@@ -300,12 +301,7 @@ class TRTHybrid(nn.Module):
         """
         if self.initial_permute:
             inputs = inputs.permute(0, 2, 1)
-        batch_size, d, n = inputs.size()  # B, D, N
-
-        # Reshape mask to fit attention mechanism [batch_size, 1, 1, seq_len] for some attention implementations
-        # If needed, you can reshape it for the multi-head attention.
-        attention_mask = mask.unsqueeze(1).unsqueeze(
-            2)  # Shape [1, 1, 512] or [batch_size, 1, 1, 512]
+        batch_size, d, n = inputs.size()  # B, D, N (B, 2, N)
 
         x = self.emb_encoder(inputs)
         x_encoder = self.encoder(x, mask=mask)
@@ -330,7 +326,7 @@ class TRTHybrid(nn.Module):
         #I'd rather use no activation
         outputs_coord = self.params_head(
             x
-        ).sigmoid()  # params are normalized after sigmoid!!
+        )  # .sigmoid()  # params are normalized after sigmoid!!
         global_feature = global_feature.squeeze()
         outputs_vertex = self.vertex_head(global_feature) # sigmoid()
 
