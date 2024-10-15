@@ -14,7 +14,6 @@ TParamsArr = Annotated[npt.NDArray[DType], Literal[7]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
 
 
-@gin.configurable
 class ConstraintsNormalizer:
     """MinMax scaler in range from -1 to 1
     for each coordinate
@@ -101,18 +100,20 @@ class TrackParamsNormalizer:
             )
         ```
         """
-        norm_vx = self.minmax_norm(vx, *self._vx_range)
-        norm_vy = self.minmax_norm(vy, *self._vy_range)
-        norm_vz = self.minmax_norm(vz, *self._vz_range)
-        norm_pt = self.minmax_norm(pt, *self._pt_range)
-        norm_phi = self.minmax_norm(phi, *self._phi_range)
-        norm_theta = self.minmax_norm(theta, 0, np.pi)
-        cat_charge = 0 if charge == -1 else 1
-        params_vector = np.array(
-            [norm_vx, norm_vy, norm_vz, norm_pt, norm_phi, norm_theta, cat_charge],
-            dtype=np.float32,
-        )
-        return params_vector
+        params_list = []
+        for data, low, up in (
+            (vx, *self._vx_range),
+            (vy, *self._vy_range),
+            (vz, *self._vz_range),
+            (pt, *self._pt_range),
+            (phi, *self._phi_range),
+            (theta, 0, np.pi),
+        ):
+            params_list.append(self.minmax_norm(data, low, up))
+
+        params_list.append(0 if charge == -1 else 1)
+
+        return np.array(params_list, dtype=np.float64)
 
     def denormalize(
         self,
@@ -130,35 +131,57 @@ class TrackParamsNormalizer:
         """Function that denormalizes normalized track parameters including vertex
         to return to the original values
         """
-        orig_vx = self.minmax_denorm(norm_params_vector[0], *self._vx_range)
-        orig_vy = self.minmax_denorm(norm_params_vector[1], *self._vy_range)
-        orig_vz = self.minmax_denorm(norm_params_vector[2], *self._vz_range)
-        orig_pt = self.minmax_denorm(norm_params_vector[3], *self._pt_range)
-        orig_phi = self.minmax_denorm(norm_params_vector[4], *self._phi_range)
-        pi = np.pi if is_numpy else torch.pi
-        orig_theta = self.minmax_denorm(norm_params_vector[5], 0, pi)
+
+        denorm_params_list = []
+        for data, low, up in (
+            (norm_params_vector[0], *self._vx_range),
+            (norm_params_vector[1], *self._vy_range),
+            (norm_params_vector[2], *self._vz_range),
+            (norm_params_vector[3], *self._pt_range),
+            (norm_params_vector[4], *self._phi_range),
+            (norm_params_vector[5], 0, np.pi),
+        ):
+            denorm_params_list.append(self.minmax_denorm(data, low, up))
+
         # from categorical (0, 1) to (-1, 1)
         if is_charge_categorical:
-            orig_charge = (norm_params_vector[6] > 0.5) * 2 - 1
+            charge = (norm_params_vector[6] > 0.5) * 2 - 1
         else:
-            orig_charge = norm_params_vector[6]
+            charge = norm_params_vector[6]
+
+        denorm_params_list.append(charge)
+
         if is_numpy:
-            params_vector = np.array(
-                [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge],
-                dtype=np.float32,
-            )
+            params_vector = np.array(denorm_params_list, dtype=np.float32)
         else:
-            params_vector = torch.stack(
-                [orig_vx, orig_vy, orig_vz, orig_pt, orig_phi, orig_theta, orig_charge]
+            denorm_params_list_tensor = list(
+                map(lambda x: torch.tensor(x, dtype=torch.float32), denorm_params_list)
             )
+            params_vector = torch.stack(denorm_params_list_tensor)
+
         return params_vector
 
 
 if __name__ == "__main__":
-    p = TrackParams(phi=5.9388142319757575, theta=0.7744413183107033, pt=946.6066686063032, charge=-1)
-    v = Vertex(x=-0.705010350151656, y=-18.174579211083792, z=44.13365795124486)
+    p = TrackParams(
+        phi=np.float32(5.9388142319757575),
+        theta=np.float32(0.7744413183107033),
+        pt=np.float32(946.6066686063032),
+        charge=np.int8(-1),
+    )
+    v = Vertex(
+        x=np.float32(-0.705010350151656),
+        y=np.float32(-18.174579211083792),
+        z=np.float32(44.13365795124486),
+    )
+
     normalizer = TrackParamsNormalizer()
-    n_params = normalizer.normalize(vx=v.x, vy=v.y, vz=v.z, pt=p.pt, phi=p.phi, theta=p.theta, charge=p.charge)
-    params = normalizer.denormalize(n_params)
-    print(params[0]-v.x, params[1]-v.y, params[2]-v.z)
-    print(params[3] - p.pt, params[4] - p.phi, params[5] - p.theta, params[6] - p.charge)
+    normalized_params = normalizer.normalize(
+        vx=v.x, vy=v.y, vz=v.z, pt=p.pt, phi=p.phi, theta=p.theta, charge=p.charge
+    )
+    params = normalizer.denormalize(normalized_params, is_numpy=True)
+
+    print(params[0] - v.x, params[1] - v.y, params[2] - v.z)
+    print(
+        params[3] - p.pt, params[4] - p.phi, params[5] - p.theta, params[6] - p.charge
+    )
