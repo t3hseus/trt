@@ -24,9 +24,14 @@ def match_targets(outputs, targets):
     )
     return row_ind, col_ind
 
-
-def vertex_distance(outputs, targets):
-    #vertex_out = outputs[:, 0, :3]
+def vertex_distance(
+    outputs: torch.Tensor,
+    targets: torch.Tensor,
+    weights: tuple[float] = (0.1, 0.1, 0.8)
+) -> torch.Tensor:
+    outputs = outputs.squeeze()
     vertex_target = targets[:, 0, :3]
-    return torch.nn.functional.l1_loss(outputs.squeeze(), vertex_target) * 3
 
+    weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False)
+    # return torch.nn.functional.l1_loss(outputs, vertex_target) * 3
+    return torch.nn.functional.l1_loss(outputs * weights_, vertex_target * weights_) * 3
