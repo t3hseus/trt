@@ -326,8 +326,7 @@ class TRTHybrid(nn.Module):
             nn.BatchNorm1d(channels // 2),
             nn.ReLU(),
             nn.Conv1d(channels // 2, channels, 1),
-            nn.BatchNorm1d(channels),
-            nn.ReLU()
+            nn.BatchNorm1d(channels)
         )  # MLP (pointwise embedding)
         self.encoder = PointTransformerEncoder(channels=channels)
 
@@ -361,8 +360,6 @@ class TRTHybrid(nn.Module):
             nn.ReLU(),
             nn.Dropout(p=dropout),
             nn.Linear(channels, 3),  # num of vertex elements
-            nn.BatchNorm1d(3),
-            nn.ReLU()
         )  # vertex head is a global head.
 
     def forward(

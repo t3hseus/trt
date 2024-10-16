@@ -29,9 +29,9 @@ INTERMEDIATE = False
 
 def main():
     writer = SummaryWriter()
-    hits_norm = ConstraintsNormalizer()
-    params_norm = TrackParamsNormalizer()
-    out_dir = pjoin(r"E:\projects\trt\weights", datetime.today().strftime("%Y-%m-%d"))
+    hits_norm = None # ConstraintsNormalizer()
+    params_norm = None # TrackParamsNormalizer()
+    out_dir = pjoin(r"D:\projects\trt\weights", datetime.today().strftime("%Y-%m-%d"))
     train_loader, val_loader = prepare_data(
         hits_norm=hits_norm,
         params_norm=params_norm,
@@ -57,7 +57,7 @@ def main():
         device
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.00001, weight_decay=0.00001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.00001)
     progress_bar = tqdm(range(5000))
     min_loss_train = min_loss_val = 1e5
     for epoch in progress_bar:
