@@ -1,17 +1,16 @@
+"""
+This is the model what was first sucessfully trained on 4096 events and achieved vertex distance 32.
+"""
 import copy
-
 import torch
 import torch.nn as nn
-
-from src.deprecated.pointnet import PointNet2
 
 
 class PointTransformerEncoder(nn.Module):
     def __init__(self, channels=128):
         super().__init__()
         # channels = int(n_points / 4)
-        self.conv1 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        self.conv2 = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
+
         self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(channels)
         self.bn2 = nn.BatchNorm1d(channels)
@@ -19,28 +18,106 @@ class PointTransformerEncoder(nn.Module):
         self.norm2 = nn.LayerNorm(channels)
 
         self.sa1 = SALayer(channels)
+        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
         self.sa2 = SALayer(channels)
         self.sa3 = SALayer(channels)
         self.sa4 = SALayer(channels)
+        self.feedforward1 = nn.Sequential(
+            nn.Linear(channels, channels//2),
+            nn.ReLU(),
+            nn.Linear(channels//2, channels)
+        )
+        self.feedforward2 = nn.Sequential(
+            nn.Linear(channels, channels//2),
+            nn.ReLU(),
+            nn.Linear(channels//2, channels)
+        )
+        self.feedforward3 = nn.Sequential(
+            nn.Linear(channels, channels//2),
+            nn.ReLU(),
+            nn.Linear(channels//2, channels)
+        )
+        self.feedforward4 = nn.Sequential(
+            nn.Linear(channels, channels // 2),
+            nn.ReLU(),
+            nn.Linear(channels // 2, channels)
+        )
+        self.norm1 = nn.LayerNorm(channels)
+        self.norm2 = nn.LayerNorm(channels)
 
-    def forward(self, x, mask=None):
+        self.norm3 = nn.LayerNorm(channels)
+        self.norm4 = nn.LayerNorm(channels)
+
+        self.norm11 = nn.LayerNorm(channels)
+        self.norm21 = nn.LayerNorm(channels)
+
+        self.norm31 = nn.LayerNorm(channels)
+        self.norm41 = nn.LayerNorm(channels)
+
+    def forward(self, inputs, mask=None):
         #
         # b, 3, npoint, nsample
         # conv2d 3 -> 128 channels 1, 1
         # b * npoint, c, nsample
         # permute reshape
-        batch_size, _, _ = x.size()
-
+        batch_size, _, _ = inputs.size()
+        x = inputs.permute(0, 2, 1)  # B, N, D  ((N, L, E_q) in MHAtt
         # B, D, N
         # x = f.relu(self.bn1(self.conv1(x)))
         # x = f.relu(self.bn2(self.conv2(x)))
-        x1 = self.sa1(x, mask=mask)
-        x2 = self.sa2(x1, mask=mask)
-        x3 = self.sa3(x2, mask=mask)
-        x4 = self.sa4(x3, mask=mask)
-        x = torch.cat((x1, x2, x3, x4), dim=1)
-        x = self.conv3(x)
-        return x
+
+        x1, _ = self.sa1_mh(
+            x, x, x, key_padding_mask=~mask
+        )
+        x1 = self.norm11(self.feedforward1(self.norm1(x + x1)))
+        x2, _ = self.sa1_mh(
+            x1, x1, x1, key_padding_mask=~mask
+        )
+        x2 = self.norm21(self.feedforward2(self.norm1(x1 + x2)))
+        x3, _ = self.sa1_mh(
+            x2, x2, x2, key_padding_mask=~mask
+        )
+        x3 = self.norm31(self.feedforward3(self.norm1(x2 + x3)))
+        x4, _ = self.sa1_mh(
+            x3, x3, x3, key_padding_mask=~mask
+        )
+        x4 = self.norm41(self.feedforward4(self.norm1(x3 + x4)))
+
+        #x2 = self.sa2(x1.permute(0,1,2), mask=mask)
+        #x3 = self.sa3(x2, mask=mask)
+        #x4 = self.sa4(x3, mask=mask)
+        #x = torch.cat((x1, x2, x3, x4), dim=-1)
+        #x = self.conv3(x)
+        # NOTE: changing this to just tranmsformer layers make loss worse again
+        return x4.permute(0, 2, 1)
+
+
+#TODO: change kolchos layers to this
+class TransformerLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
+        super(TransformerLayer, self).__init__()
+
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead, batch_first=True)
+        self.feedforward = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model)
+        )
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+        # src has shape (batch_size, seq_len, d_model)
+        attn_output, _ = self.self_attn(src, src, src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask)
+        src = src + self.dropout(attn_output)
+        src = self.norm1(src)
+        ff_output = self.feedforward(src)
+        src = self.norm2(src + self.dropout(ff_output))
+        return src
 
 
 class SALayer(nn.Module):
@@ -91,111 +168,6 @@ class SALayer(nn.Module):
         return mask
 
 
-class JointAttentionLayer(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.q_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.k_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.q_conv.weight = self.k_conv.weight
-        self.q_conv.bias = self.k_conv.bias
-
-        self.v_conv = nn.Conv1d(channels, channels, 1)
-        self.trans_conv = nn.Conv1d(channels, channels, 1)
-        self.after_norm = nn.BatchNorm1d(channels)  # why not layer norm?
-        self.act = nn.ReLU()
-        self.softmax = nn.Softmax(dim=-1)
-
-    def forward(self, x: torch.Tensor, query: torch.Tensor, mask: torch.Tensor = None):
-        # b, n, c
-        x_q = self.q_conv(query).permute(0, 2, 1)  # do we need permute or not?
-        # b, c, n
-        x_k = self.k_conv(x)
-        x_v = self.v_conv(x)
-        # b, n, n
-        energy = torch.bmm(x_q, x_k)  # why not normalization?
-        d = energy.shape[-2]
-        if mask is not None:
-            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
-            energy = energy.masked_fill(mask == 0, -9e15)
-            d = 1e-9 + mask.sum(dim=1, keepdim=True)
-        energy = energy / d
-        attention = self.softmax(energy)  # need normalization!!?
-        # b, c, n
-        x_r = torch.bmm(x_v, attention)
-        x_r = self.act(self.after_norm(self.trans_conv(x - x_r)))
-        x = x + x_r
-        return x
-
-    @staticmethod
-    def _generate_square_subsequent_mask(sequence_mask):
-        mask = (torch.triu(torch.ones(sequence_mask, sequence_mask)) == 1).transpose(
-            0, 1
-        )
-        mask = (
-            mask.float()
-            .masked_fill(mask == 0, float("-inf"))
-            .masked_fill(mask == 1, float(0.0))
-        )
-        return mask
-
-
-class PCTDetectDecoder(nn.Module):
-    def __init__(self, channels=128, dim_feedforward=64, nhead=2, dropout=0.2):
-        super().__init__()
-
-        self.sa1 = nn.MultiheadAttention(
-            channels, nhead, dropout=dropout, batch_first=True
-        )
-        self.multihead_attn = nn.MultiheadAttention(
-            channels, nhead, dropout=dropout, batch_first=True
-        )
-
-        self.linear1 = nn.Linear(channels, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, channels)
-
-        self.norm1 = nn.LayerNorm(channels)
-        self.norm2 = nn.LayerNorm(channels)
-        self.norm3 = nn.LayerNorm(channels)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.activation = torch.nn.functional.leaky_relu  # gelu, leaky_relu etc
-
-    def forward(
-        self,
-        x_encoder: torch.Tensor,
-        x_decoder: torch.Tensor,
-        object_pos_emb: torch.Tensor,
-        mask: torch.Tensor = None,
-    ):
-
-        # permute reshape
-        batch_size, _, _ = x_encoder.size()
-        x_encoder = x_encoder.permute(0, 2, 1)
-        # B, D, N
-        # self-attention, add + norm for query_embeddings
-        q = k = x_decoder + object_pos_emb
-        mask = ~mask
-        x_att = self.sa1(q, k, value=x_decoder)[0]
-        x1 = self.norm1(x_decoder + self.dropout1(x_att))
-
-        # combine with encoder output! (attention + add+norm
-        x_att = self.multihead_attn(
-            query=(x1 + object_pos_emb),
-            key=x_encoder,
-            value=x_encoder,
-            key_padding_mask=mask,
-        )[0]
-        x1 = self.norm2(x1 + self.dropout2(x_att))
-        # fpn on top of layer
-        x2 = self.linear2(self.dropout(self.activation(self.linear1(x1))))
-        x1 = x1 + self.dropout3(x2)
-        x1 = self.norm3(x1)
-        return x1
-
-
 class TRTDetectDecoder(nn.Module):
     def __init__(
         self,
@@ -203,7 +175,7 @@ class TRTDetectDecoder(nn.Module):
         channels: int = 128,
         dim_feedforward: int = 64,
         nhead: int = 4,
-        dropout: float = 0.2,
+        dropout: float = 0.0,
         return_intermediate: bool = False,
     ):
         """
@@ -272,11 +244,11 @@ class TRTDetectDecoder(nn.Module):
 
 class TRTDetectDecoderLayer(nn.Module):
     def __init__(
-            self,
-            channels=128,
-            dim_feedforward=64,
-            nhead=2,
-            dropout=0.2
+        self,
+        channels=128,
+        dim_feedforward=64,
+        nhead=2,
+        dropout=0.0
     ):
         super().__init__()
 
@@ -309,7 +281,6 @@ class TRTDetectDecoderLayer(nn.Module):
         memory_key_padding_mask: torch.Tensor = None,
         query_mask: torch.Tensor | None = None,
     ):
-
         # self-attention, add + norm for query_embeddings
         q = k = query + query_pos
         # mask = ~query_mask
@@ -335,7 +306,7 @@ class TRTDetectDecoderLayer(nn.Module):
 class TRTHybrid(nn.Module):
     def __init__(
         self,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         n_points: int = 512,
         input_channels: int = 3,
         initial_permute: bool = True,
@@ -343,6 +314,7 @@ class TRTHybrid(nn.Module):
         nhead: int = 2,
         num_classes: int = 1,
         num_out_params: int = 7,
+        return_intermediate=False
     ):
         super().__init__()
         channels = n_points // 4
@@ -350,44 +322,53 @@ class TRTHybrid(nn.Module):
         self.initial_permute = initial_permute
         self.d_model = channels
         self.nhead = nhead
+        self.return_intermediate = return_intermediate
         self.emb_encoder = nn.Sequential(
-            nn.Conv1d(input_channels, channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(channels),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Conv1d(channels, channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(channels),
-            nn.LeakyReLU(negative_slope=0.2),
-        )
-        self.encoder = PointNet2(
-            num_points=self.n_points,
-            base_radius=0.2,
-            in_channel=3
-        )  # PointTransformerEncoder(channels=channels)
+            nn.Conv1d(input_channels, channels // 2, kernel_size=1),
+            nn.BatchNorm1d(channels // 2),
+            nn.ReLU(),
+            nn.Conv1d(channels // 2, channels, 1),
+            nn.BatchNorm1d(channels)
+        )  # MLP (pointwise embedding)
+        self.encoder = PointTransformerEncoder(channels=channels)
 
         self.query_embed = nn.Embedding(
-            num_embeddings=num_candidates, embedding_dim=channels
+            num_embeddings=num_candidates, embedding_dim=channels,
         )
         self.decoder = TRTDetectDecoder(
             channels=channels,
+            num_layers=2,
             dim_feedforward=channels // 2,
-            nhead=2,
-            dropout=dropout
+            nhead=1,
+            dropout=dropout,
+            return_intermediate=return_intermediate
         )
-        self.class_head = nn.Sequential(
-            nn.Linear(channels, num_classes + 1),
-            nn.Dropout(p=dropout)
-        )
-        self.params_head = nn.Sequential(
-            nn.Linear(channels, num_out_params * 2, bias=False),
-            nn.Dropout(p=dropout),
+        self.segment_head = nn.Sequential(
+            nn.Linear(channels, channels, bias=False),
             nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(num_out_params * 2, num_out_params, bias=False),
-            nn.Dropout(p=dropout),
+            nn.Linear(channels, channels // 2),
             nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(channels // 2, 2),
         )
 
+        self.class_head = nn.Sequential(
+            nn.Linear(channels, channels // 2, bias=False),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(channels // 2, num_classes + 1),
+        )
+        self.params_head = nn.Sequential(
+            nn.Linear(channels, channels // 2, bias=False),
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(channels // 2, num_out_params - 3),
+        )
+        self.vertex_head = nn.Sequential(
+            nn.Linear(channels, channels // 2),  # num of vertex elements
+            nn.LeakyReLU(negative_slope=0.2),
+            nn.Linear(channels // 2, 3),  # num of vertex elements
+        )  # vertex head is a global head.
+
     def forward(
-            self, inputs, mask=None, orig_params=None
+        self, inputs, mask=None, return_params_with_vertex: bool = False
     ) -> dict[str, torch.Tensor]:
         """
         It returns a dict with the following elements:
@@ -400,15 +381,17 @@ class TRTHybrid(nn.Module):
         """
         if self.initial_permute:
             inputs = inputs.permute(0, 2, 1)
-        batch_size, d, n = inputs.size()  # B, D, N
 
-        # Reshape mask to fit attention mechanism [batch_size, 1, 1, seq_len] for some attention implementations
-        # If needed, you can reshape it for the multi-head attention.
-        attention_mask = mask.unsqueeze(1).unsqueeze(
-            2)  # Shape [1, 1, 512] or [batch_size, 1, 1, 512]
+        batch_size, d, n = inputs.size()  # B, D, N (B, 2, N)
 
-        #x = self.emb_encoder(inputs)
-        x_encoder = self.encoder(inputs, mask=mask)
+        x = self.emb_encoder(inputs)
+
+        x_encoder = self.encoder(x, mask=mask)
+        outputs_segment = self.segment_head(x_encoder.permute(0, 2, 1))  # sigmoid()
+
+        global_feature = x.mean(dim=-1)
+        global_feature = global_feature.squeeze()
+
         # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(
             0).repeat(batch_size, 1, 1)
@@ -422,16 +405,23 @@ class TRTHybrid(nn.Module):
             permute_input=True  # To maintain B, Q_l, E_d and B, X_len, E_d
         )
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
-        #I'd rather use no activation
-        outputs_coord = self.params_head(
-            x
-        ).sigmoid()  # params are normalized after sigmoid!!
+        outputs_coord = self.params_head(x)  # params are normalized after sigmoid!!
+
+
+        outputs_vertex = self.vertex_head(global_feature)  # sigmoid()
+        if return_params_with_vertex:
+            # for evaluation (to hide concatenation to
+            vertex = outputs_vertex.unsqueeze(-2).expand(
+                -1, outputs_coord.shape[-2], -1
+            )
+            if self.return_intermediate:
+                vertex = vertex.unsqueeze(0).expand(outputs_coord.shape[0], -1, -1, -1)
+
+            outputs_coord = torch.cat((vertex, outputs_coord), dim=-1)
+
         return {
             "logits": outputs_class,
             "params": outputs_coord,
+            "vertex": outputs_vertex,
+            "hit_logits": outputs_segment
         }
-
-
-
-if __name__ == "__main__":
-    model = TRTHybrid()

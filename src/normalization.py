@@ -72,11 +72,11 @@ class TrackParamsNormalizer:
 
     @staticmethod
     def minmax_norm(p: np.float32, min_val: np.float32, max_val: np.float32):
-        return 2. * (p - min_val) / (max_val - min_val) - 1
+        return (p - min_val) / (max_val - min_val)
 
     @staticmethod
     def minmax_denorm(p: np.float32, min_val: np.float32, max_val: np.float32):
-        return ((p + 1)  * (max_val - min_val) / 2. + min_val)
+        return p * (max_val - min_val) + min_val
 
     def normalize(
         self,

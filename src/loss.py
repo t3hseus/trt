@@ -203,6 +203,27 @@ class TRTHungarianLoss(nn.Module):
         )
 
 
+class TRTLossWithSegment(TRTHungarianLoss):
+    def forward(
+            self,
+            preds: dict[str, torch.Tensor],
+            targets: dict[str, torch.Tensor],
+            preds_lengths,
+            targets_lengths,
+    ):
+        loss_base = super().forward(preds, targets, preds_lengths, targets_lengths)
+        batch_size = preds["params"].shape[0]
+        preds_segment = preds["hit_logits"]
+        loss_segment = torch.tensor(0.0).to(preds_segment.device)
+        for i in range(batch_size):
+            loss_segment += class_loss(
+                preds_segment[i],
+                targets["hit_labels"][i],
+                loss_fn=self._class_loss
+            )
+        return loss_base + self._weights[3] * loss_segment
+
+
 def class_loss(outputs, targets, loss_fn: Callable):
     return loss_fn(outputs, targets)
 

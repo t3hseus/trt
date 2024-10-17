@@ -13,7 +13,7 @@ from src.deprecated.pointnet.pointnet_utils import (
 
 class PointNet2(nn.Module):
     def __init__(
-        self, num_points: int = 1024, base_radius: float = 0.1, in_channel: int = 3
+        self, num_points: int = 1024, base_radius: float = 0.1, in_channel: int = 3, out_channel: int = 256
     ):
         super(PointNet2, self).__init__()
         self.sa1 = PointNetSetAbstraction(
@@ -42,11 +42,11 @@ class PointNet2(nn.Module):
         self.fp3 = PointNetFeaturePropagation(384, [256, 256])
         self.fp2 = PointNetFeaturePropagation(320, [256, 128])
         self.fp1 = PointNetFeaturePropagation(128, [128, 128, 128])
-        self.conv1 = nn.Conv1d(128, 128, 1)
-        self.bn1 = nn.BatchNorm1d(128)
+        self.conv1 = nn.Conv1d(128, out_channel, 1)
+        self.bn1 = nn.BatchNorm1d(out_channel)
         self.drop1 = nn.Dropout(0.5)
 
-    def forward(self, inputs: torch.Tensor):
+    def forward(self, inputs: torch.Tensor, mask=None):
         """
         Input:
             xyz: input points position data, [B, C, N]

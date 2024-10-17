@@ -9,19 +9,18 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.dataset import (DatasetMode, SPDEventsDataset,
-                         collate_fn_with_class_loss)
+from src.dataset import (DatasetMode, SPDEventsDataset, collate_fn_with_segment_loss)
 from src.metrics import vertex_distance
-from src.models.model_okey import TRTHybrid
+from src.models.model_with_segment import TRTHybrid
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.loss import TRTHungarianLoss
+from src.loss import TRTHungarianLoss, TRTLossWithSegment
 
 seed_everything(13)
 
 MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
 TRUNCATION_LENGTH = 1024
-BATCH_SIZE = 1
+BATCH_SIZE = 32
 NUM_EVENTS_TRAIN = 32  # 50000
 NUM_EVENTS_VALID = 32  # 10000
 INTERMEDIATE = False
@@ -59,8 +58,8 @@ def main():
         num_out_params=7,
         return_intermediate=INTERMEDIATE,
     ).to(device)
-    criterion = TRTHungarianLoss(
-        weights=(0.33, 0.33, 0.33), intermediate=INTERMEDIATE
+    criterion = TRTLossWithSegment(
+        weights=(0.33, 0.33, 0.33, 0.33), intermediate=INTERMEDIATE
     ).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=0.00001, weight_decay=0.00001)
@@ -123,7 +122,7 @@ def prepare_data(
         train_data,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_fn_with_class_loss,
+        collate_fn=collate_fn_with_segment_loss,
         num_workers=0,
         pin_memory=False,
         persistent_workers=False,
@@ -143,13 +142,36 @@ def prepare_data(
         val_data,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_fn_with_class_loss,
+        collate_fn=collate_fn_with_segment_loss,
         num_workers=4,
         pin_memory=False,
         persistent_workers=True,
     )
     return train_loader, val_loader
 
+
+def calc_metrics(outputs, batch, device):
+    params_only_dist = TRTHungarianLoss(weights=(1, 0.0, 0.0), intermediate=False).to(
+        device
+    )
+    params = outputs["params"][-1].to(device) if INTERMEDIATE else outputs["params"]
+    logits = outputs["logits"][-1].to(device) if INTERMEDIATE else outputs["logits"]
+    vertex = outputs["vertex"]
+    vertex_dist = vertex_distance(vertex, batch["targets"].to(device))
+    last_out_params_dist = params_only_dist(
+        preds={"params": params, "logits": logits, "vertex": vertex},
+        targets={
+            "targets": batch["targets"].to(device),
+            "labels": batch["labels"].to(device),
+        },
+        preds_lengths=torch.LongTensor(
+            [NUM_CANDIDATES]
+            * params.shape[-3]
+            # if we have intermediate losses, shape is 4 dim, else 3 dim
+        ).to(device),
+        targets_lengths=batch["n_tracks_per_sample"].to(device),
+    )
+    return vertex_dist, last_out_params_dist
 
 def train_epoch(
     model: nn.Module,
@@ -165,9 +187,6 @@ def train_epoch(
     train_loss = 0.0
     num_train_batches = 0
 
-    params_only_dist = TRTHungarianLoss(weights=(1, 0.0, 0.0), intermediate=False).to(
-        device
-    )
     for batch in train_loader:
         num_train_batches += 1
         optimizer.zero_grad(set_to_none=True)
@@ -177,6 +196,7 @@ def train_epoch(
             targets={
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
+                "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
                 [NUM_CANDIDATES]
@@ -190,23 +210,7 @@ def train_epoch(
         loss.backward()
         optimizer.step()
 
-        params = outputs["params"][-1].to(device) if INTERMEDIATE else outputs["params"]
-        logits = outputs["logits"][-1].to(device) if INTERMEDIATE else outputs["logits"]
-        vertex_dist = vertex_distance(outputs["vertex"], batch["targets"].to(device))
-        last_out_params_dist = params_only_dist(
-            preds={"params": params, "logits": logits, "vertex": outputs["vertex"]},
-            targets={
-                "targets": batch["targets"].to(device),
-                "labels": batch["labels"].to(device),
-            },
-            preds_lengths=torch.LongTensor(
-                [NUM_CANDIDATES]
-                * outputs["params"].shape[-3]
-                # if we have intermediate losses, shape is 4 dim, else 3 dim
-            ).to(device),
-            targets_lengths=batch["n_tracks_per_sample"].to(device),
-        )
-
+        vertex_dist, last_out_params_dist = calc_metrics(outputs, batch, device)
         writer.add_scalar(
             "train_loss_batch", loss, epoch * len(train_loader) + num_train_batches
         )
@@ -244,9 +248,6 @@ def val_epoch(
     val_loss = 0
     num_val_batches = 0
     model.eval()
-    params_only_dist = TRTHungarianLoss(weights=(1., 0.0, 0.0), intermediate=False).to(
-        device
-    )
     for batch in val_loader:
         num_val_batches += 1
         outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
@@ -255,6 +256,7 @@ def val_epoch(
             targets={
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
+                "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
                 [MAX_EVENT_TRACKS]
@@ -265,22 +267,7 @@ def val_epoch(
         )
         val_loss += loss.detach().item()
 
-        params = outputs["params"][-1].to(device) if INTERMEDIATE else outputs["params"]
-        logits = outputs["logits"][-1].to(device) if INTERMEDIATE else outputs["logits"]
-        last_out_params_dist = params_only_dist(
-            preds={"params": params, "logits": logits, "vertex": outputs["vertex"]},
-            targets={
-                "targets": batch["targets"].to(device),
-                "labels": batch["labels"].to(device),
-            },
-            preds_lengths=torch.LongTensor(
-                [NUM_CANDIDATES]
-                * outputs["params"].shape[-3]
-                # if we have intermediate losses, shape is 4 dim, else 3 dim
-            ).to(device),
-            targets_lengths=batch["n_tracks_per_sample"].to(device),
-        )
-
+        vertex_dist, last_out_params_dist = calc_metrics(outputs, batch, device)
         writer.add_scalar(
             "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
         )
