@@ -1,21 +1,57 @@
+"""
+This is the model what was first sucessfully trained on 4096 events and achieved vertex distance 32.
+"""
 import copy
 import torch
 import torch.nn as nn
 
 
 class PointTransformerEncoder(nn.Module):
-    def __init__(self, channels=128, n_heads=2, dropout=0.1, num_layers=4):
+    def __init__(self, channels=128):
         super().__init__()
         # channels = int(n_points / 4)
 
-        self.conv3 = nn.Conv1d(channels * num_layers, channels, kernel_size=1, bias=False)
-        self.layers = nn.ModuleList(
-            [
-                TransformerLayer(
-                    channels, n_heads, dim_feedforward=channels * 4, dropout=dropout
-                ) for _ in range(num_layers)
-            ]
+        self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(channels)
+        self.bn2 = nn.BatchNorm1d(channels)
+        self.norm1 = nn.LayerNorm(channels)
+        self.norm2 = nn.LayerNorm(channels)
+
+        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.feedforward1 = nn.Sequential(
+            nn.Linear(channels, channels*4),
+            nn.ReLU(),
+            nn.Linear(channels*4, channels)
         )
+        self.feedforward2 = nn.Sequential(
+            nn.Linear(channels, channels*4),
+            nn.ReLU(),
+            nn.Linear(channels*4, channels)
+        )
+        self.feedforward3 = nn.Sequential(
+            nn.Linear(channels, channels*4),
+            nn.ReLU(),
+            nn.Linear(channels*4, channels)
+        )
+        self.feedforward4 = nn.Sequential(
+            nn.Linear(channels, channels*4),
+            nn.ReLU(),
+            nn.Linear(channels*4, channels)
+        )
+        self.norm1 = nn.LayerNorm(channels)
+        self.norm2 = nn.LayerNorm(channels)
+
+        self.norm3 = nn.LayerNorm(channels)
+        self.norm4 = nn.LayerNorm(channels)
+
+        self.norm11 = nn.LayerNorm(channels)
+        self.norm21 = nn.LayerNorm(channels)
+
+        self.norm31 = nn.LayerNorm(channels)
+        self.norm41 = nn.LayerNorm(channels)
 
     def forward(self, inputs, mask=None):
         #
@@ -28,10 +64,23 @@ class PointTransformerEncoder(nn.Module):
         # B, D, N
         # x = f.relu(self.bn1(self.conv1(x)))
         # x = f.relu(self.bn2(self.conv2(x)))
-        xs = []
-        for layer in self.layers:
-            x = layer(x, ~mask)
-            xs.append(x)
+
+        x1, _ = self.sa1_mh(
+            x, x, x, key_padding_mask=~mask
+        )
+        x1 = self.norm11(self.feedforward1(self.norm1(x + x1)))
+        x2, _ = self.sa1_mh(
+            x1, x1, x1, key_padding_mask=~mask
+        )
+        x2 = self.norm21(self.feedforward2(self.norm1(x1 + x2)))
+        x3, _ = self.sa1_mh(
+            x2, x2, x2, key_padding_mask=~mask
+        )
+        x3 = self.norm31(self.feedforward3(self.norm1(x2 + x3)))
+        x4, _ = self.sa1_mh(
+            x3, x3, x3, key_padding_mask=~mask
+        )
+        x4 = self.norm41(self.feedforward4(self.norm1(x3 + x4)))
 
         #x2 = self.sa2(x1.permute(0,1,2), mask=mask)
         #x3 = self.sa3(x2, mask=mask)
@@ -39,7 +88,7 @@ class PointTransformerEncoder(nn.Module):
         #x = torch.cat((x1, x2, x3, x4), dim=-1)
         #x = self.conv3(x)
         # NOTE: changing this to just tranmsformer layers make loss worse again
-        return x.permute(0, 2, 1)
+        return x4.permute(0, 2, 1)
 
 
 #TODO: change kolchos layers to this
@@ -47,9 +96,7 @@ class TransformerLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
         super(TransformerLayer, self).__init__()
 
-        self.self_attn = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=nhead, batch_first=True
-        )
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead, batch_first=True)
         self.feedforward = nn.Sequential(
             nn.Linear(d_model, dim_feedforward),
             nn.ReLU(),
@@ -59,64 +106,14 @@ class TransformerLayer(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, src, src_key_padding_mask=None):
+    def forward(self, src, src_mask=None, src_key_padding_mask=None):
         # src has shape (batch_size, seq_len, d_model)
-        attn_output, _ = self.self_attn(
-            src, src, src, key_padding_mask=src_key_padding_mask
-        )
+        attn_output, _ = self.self_attn(src, src, src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask)
         src = src + self.dropout(attn_output)
         src = self.norm1(src)
         ff_output = self.feedforward(src)
         src = self.norm2(src + self.dropout(ff_output))
         return src
-
-
-class SALayer(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.q_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.k_conv = nn.Conv1d(channels, channels // 4, 1, bias=False)
-        self.q_conv.weight = self.k_conv.weight
-        self.q_conv.bias = self.k_conv.bias
-
-        self.v_conv = nn.Conv1d(channels, channels, 1)
-        self.trans_conv = nn.Conv1d(channels, channels, 1)
-        self.after_norm = nn.BatchNorm1d(channels)  # why not layer norm?
-        self.act = nn.LeakyReLU(negative_slope=0.2)
-        self.softmax = nn.Softmax(dim=-1)
-
-    def forward(self, x, mask=None):
-        # b, n, c
-        x_q = self.q_conv(x).permute(0, 2, 1)
-        # b, c, n
-        x_k = self.k_conv(x)
-        x_v = self.v_conv(x)
-        # b, n, n
-        energy = torch.bmm(x_q, x_k)  # why not normalization?
-        d = energy.shape[-2]
-        if mask is not None:
-            mask = torch.bitwise_and(mask[:, :, None].bool(), mask[:, None, :].bool())
-            energy = energy.masked_fill(mask == 0, -9e15)
-            d = 1e-9 + mask.sum(dim=1, keepdim=True)
-        energy = energy / d
-        attention = self.softmax(energy)  # need normalization!!?
-        # b, c, n
-        x_r = torch.bmm(x_v, attention)
-        x_r = self.act(self.after_norm(self.trans_conv(x - x_r)))
-        x = x + x_r
-        return x
-
-    @staticmethod
-    def _generate_square_subsequent_mask(sequence_mask):
-        mask = (torch.triu(torch.ones(sequence_mask, sequence_mask)) == 1).transpose(
-            0, 1
-        )
-        mask = (
-            mask.float()
-            .masked_fill(mask == 0, float("-inf"))
-            .masked_fill(mask == 1, float(0.0))
-        )
-        return mask
 
 
 class TRTDetectDecoder(nn.Module):
@@ -260,7 +257,6 @@ class TRTHybrid(nn.Module):
         dropout: float = 0.0,
         n_points: int = 512,
         input_channels: int = 3,
-        channels: int | None = None,
         initial_permute: bool = True,
         num_candidates: int = 10,
         nhead: int = 2,
@@ -269,8 +265,7 @@ class TRTHybrid(nn.Module):
         return_intermediate=False
     ):
         super().__init__()
-        if channels is None:
-            channels = n_points // 2
+        channels = n_points // 4
         self.n_points = n_points
         self.initial_permute = initial_permute
         self.d_model = channels
@@ -281,8 +276,7 @@ class TRTHybrid(nn.Module):
             nn.BatchNorm1d(channels // 2),
             nn.ReLU(),
             nn.Conv1d(channels // 2, channels, 1),
-            nn.ReLU(),
-            #nn.BatchNorm1d(channels)
+            nn.BatchNorm1d(channels)
         )  # MLP (pointwise embedding)
         self.encoder = PointTransformerEncoder(channels=channels)
 
@@ -292,7 +286,7 @@ class TRTHybrid(nn.Module):
         self.decoder = TRTDetectDecoder(
             channels=channels,
             num_layers=2,
-            dim_feedforward=channels * 4,
+            dim_feedforward=channels // 2,
             nhead=1,
             dropout=dropout,
             return_intermediate=return_intermediate
@@ -330,8 +324,8 @@ class TRTHybrid(nn.Module):
 
         batch_size, d, n = inputs.size()  # B, D, N (B, 2, N)
 
-        x = self.emb_encoder(inputs)
-        x_encoder = self.encoder(x, mask=mask)
+        x = self.emb_encoder(inputs)  # B, D, N
+        x_encoder = self.encoder(x, mask=mask)  # B, D, N
 
         # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(

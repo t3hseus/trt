@@ -7,11 +7,11 @@ import torch.nn as nn
 
 
 class PointTransformerEncoder(nn.Module):
-    def __init__(self, channels=128):
+    def __init__(self, in_channels=128, channels=128):
         super().__init__()
         # channels = int(n_points / 4)
 
-        self.conv3 = nn.Conv1d(channels * 4, channels, kernel_size=1, bias=False)
+        self.conv3 = nn.Conv1d(in_channels * 4, channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(channels)
         self.bn2 = nn.BatchNorm1d(channels)
         self.norm1 = nn.LayerNorm(channels)
@@ -327,24 +327,24 @@ class TRTHybrid(nn.Module):
             nn.Conv1d(input_channels, channels // 2, kernel_size=1),
             nn.BatchNorm1d(channels // 2),
             nn.ReLU(),
-            nn.Conv1d(channels // 2, channels, 1),
-            nn.BatchNorm1d(channels)
+            nn.Conv1d(channels // 2, channels-2, 1),
+            nn.BatchNorm1d(channels-2)
         )  # MLP (pointwise embedding)
-        self.encoder = PointTransformerEncoder(channels=channels)
+        self.encoder = PointTransformerEncoder(in_channels=channels-2, channels=channels-2)
 
         self.query_embed = nn.Embedding(
             num_embeddings=num_candidates, embedding_dim=channels,
         )
         self.decoder = TRTDetectDecoder(
             channels=channels,
-            num_layers=2,
-            dim_feedforward=channels // 2,
-            nhead=1,
+            num_layers=6,
+            dim_feedforward=channels * 2,
+            nhead=2,
             dropout=dropout,
             return_intermediate=return_intermediate
         )
         self.segment_head = nn.Sequential(
-            nn.Linear(channels, channels, bias=False),
+            nn.Linear(channels-2, channels, bias=False),
             nn.LeakyReLU(negative_slope=0.2),
             nn.Linear(channels, channels // 2),
             nn.LeakyReLU(negative_slope=0.2),
@@ -387,9 +387,11 @@ class TRTHybrid(nn.Module):
         x = self.emb_encoder(inputs)
 
         x_encoder = self.encoder(x, mask=mask)
-        outputs_segment = self.segment_head(x_encoder.permute(0, 2, 1))  # sigmoid()
+        outputs_segment = self.segment_head(x_encoder.permute(0, 2, 1))
 
-        global_feature = x.mean(dim=-1)
+        # add segmentation info to encoder
+        x_encoder = torch.cat([x_encoder, outputs_segment.permute(0, 2, 1)], dim=1)
+        global_feature = x_encoder.mean(dim=-1)
         global_feature = global_feature.squeeze()
 
         # decoder transformer
