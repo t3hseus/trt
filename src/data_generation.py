@@ -281,13 +281,14 @@ class SPDEventGenerator:
         Rtmp = Rc - vertex.r
 
         if R < Rtmp / 2:  # no intersection
-            return (0, 0, 0)
+            return Point(0, 0, 0), Momentum(0, 0, 0)
 
         R = track_params.charge * R  # both polarities
         alpha = 2 * np.arcsin(Rtmp / 2 / R)
 
         if alpha > np.pi:
-            return (0, 0, 0)  # algorithm doesn't work for spinning tracks
+            return Point(0, 0, 0), Momentum(0, 0, 0)
+            # algorithm doesn't work for spinning tracks
 
         extphi = track_params.phi - alpha / 2
         if extphi > (2 * np.pi):
