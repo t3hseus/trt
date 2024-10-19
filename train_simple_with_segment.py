@@ -15,7 +15,7 @@ from src.dataset import (DatasetMode, SPDEventsDataset,
                          collate_fn_with_segment_loss)
 from src.loss import TRTHungarianLoss, TRTLossWithSegment
 from src.metrics import vertex_distance
-from src.models.model_with_segment import TRTHybrid
+from src.models.model_with_segmentation import TRTWithSegmentation
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
 
 seed_everything(13)
@@ -55,7 +55,7 @@ def main():
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     print("Device is", device)
-    model = TRTHybrid(
+    model = TRTWithSegmentation(
         num_candidates=NUM_CANDIDATES,
         n_points=TRUNCATION_LENGTH,
         num_out_params=7,

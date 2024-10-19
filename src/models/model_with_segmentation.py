@@ -295,7 +295,7 @@ class TRTDetectDecoderLayer(nn.Module):
         return x
 
 
-class TRTHybrid(nn.Module):
+class TRTWithSegmentation(nn.Module):
     def __init__(
         self,
         dropout: float = 0.0,
