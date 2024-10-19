@@ -1,13 +1,9 @@
 import os
-# change working directory to make src visible
-# os.chdir(Path.cwd().parent)
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.stats as st
 import seaborn as sns
 from pytorch_lightning import seed_everything
 from scipy.optimize import linear_sum_assignment
@@ -19,8 +15,7 @@ from os.path import join as pjoin
 import torch
 
 from src.data_generation import SPDEventGenerator, TrackParams, Vertex
-from src.model_hybrid import TRTHybrid
-from src.models.model_with_segment import TRTHybrid
+from src.models.model_with_segmentation import TRTWithSegmentation
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
 from src.visualization import display_side_by_side, draw_event
 
@@ -38,11 +33,11 @@ seed_everything(13)
 def inference(
     weights_path: str = PATH,
     num_events: int = NUM_EVENTS_VALID,
-    truncation_length: int = 1024,
+    truncation_length: int = TRUNCATION_LENGTH,
     max_event_tracks: int = MAX_EVENT_TRACKS,
     num_images: int = NUM_IMAGES,
     result_dir: str = "plots",
-):
+) -> None:
     out_dir = pjoin(
         result_dir, datetime.today().strftime("%Y-%m-%d"), PATH.split("\\")[-2]
     )
@@ -54,36 +49,17 @@ def inference(
         max_event_tracks=max_event_tracks,
     )
 
-    model = TRTHybrid(num_candidates=50, num_out_params=7, dropout=0.0, n_points=1024)
+    model = TRTWithSegmentation(
+        num_candidates=50, num_out_params=7, dropout=0.0, n_points=1024
+    )
     model.load_state_dict(torch.load(weights_path, weights_only=True))
     model.eval()
     vertex_dists = []
     accuracies = []
     plot_events = np.random.randint(0, num_events, num_images)
     for i in tqdm(range(num_events)):
-        event = event_gen.generate_spd_event()
-        track_params = event.track_params
-        vertex = event.vertex
-        hits, labels = generate_event_from_params(event_gen, track_params, vertex)
-        hits_norm = ConstraintsNormalizer()(hits)
-        fakes_norm = ConstraintsNormalizer()(event.fakes)
-        maxlen = len(hits_norm) + len(fakes_norm)
-        batch_size = 1
-        n_features = hits.shape[-1]
-        mask = np.ones(len(hits))
-        batch_inputs = np.zeros((batch_size, maxlen, n_features), dtype=np.float32)
-        batch_hit_labels = np.zeros((batch_size, maxlen), dtype=bool)
-        batch_mask = np.ones((batch_size, maxlen), dtype=bool)
-        # params have the fixed size - MAX_TRACKS x N_PARAMS
-        batch_inputs[0, : len(hits)] = hits_norm
-        batch_inputs[0, len(hits) :] = fakes_norm  # add fakes!
-        batch_hit_labels[0, : len(hits)] = mask  # hit label to check segmentation
-        shuffle_idx = np.random.permutation(maxlen)
-        batch_inputs[0, :] = batch_inputs[0, shuffle_idx]
-        batch_hit_labels[0, :] = batch_hit_labels[0, shuffle_idx]
-
-        inputs = torch.from_numpy(batch_inputs)
-        mask = torch.from_numpy(batch_mask)
+        event, hits, labels, hits_norm, fakes_norm = generate_event(event_gen)
+        inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
         preds = model(inputs=inputs, mask=mask)
         track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
@@ -107,10 +83,9 @@ def inference(
 
         # track_distances = nearest_tracks_dist(target_tracks, pred_tracks_list)
 
-        target_hit_labels = torch.tensor(batch_hit_labels, dtype=torch.long).squeeze()
         accuracies.append(
-            (target_hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()).sum()
-            / len(target_hit_labels)
+            (hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()).sum()
+            / len(hit_labels)
         )
 
         if i in plot_events:
@@ -125,21 +100,38 @@ def inference(
                 track_mask,
                 out_dir,
             )
+    plot_histograms(accuracies, vertex_dists, out_dir)
 
-    sns.displot(np.array(accuracies), bins=82, kde=True)
-    plt.ylabel("Probability")
-    plt.xlabel("Hit segmentation accuracy")
-    plt.title("Hit segmentation accuracy histogram")
-    plt.savefig(pjoin(out_dir, "accuracy_hist"))
 
-    sns.displot(np.array(vertex_dists), bins=82, kde=True)
-    plt.ylabel("Probability")
-    plt.xlabel("Vertex distance")
-    plt.title("Distances between predicted and real vertices")
-    plt.savefig(pjoin(out_dir, "vertex_hist"))
-    print(
-        f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
+def generate_event(event_gen):
+    event = event_gen.generate_spd_event()
+    hits, labels = generate_event_from_params(
+        event_gen, event.track_params, event.vertex
     )
+    hits_norm = ConstraintsNormalizer()(hits)
+    fakes_norm = ConstraintsNormalizer()(event.fakes)
+    return event, hits, labels, hits_norm, fakes_norm
+
+
+def convert_event_to_batch(hits_norm, fakes_norm):
+    maxlen = len(hits_norm) + len(fakes_norm)
+    n_features = hits_norm.shape[-1]
+    mask = np.ones(len(hits_norm))
+    batch_inputs = np.zeros((1, maxlen, n_features), dtype=np.float32)
+    batch_hit_labels = np.zeros((1, maxlen), dtype=bool)
+    batch_mask = np.ones((1, maxlen), dtype=bool)
+    # params have the fixed size - MAX_TRACKS x N_PARAMS
+    batch_inputs[0, : len(hits_norm)] = hits_norm
+    batch_inputs[0, len(hits_norm) :] = fakes_norm  # add fakes!
+    batch_hit_labels[0, : len(hits_norm)] = mask  # hit label to check segmentation
+    shuffle_idx = np.random.permutation(maxlen)
+    batch_inputs[0, :] = batch_inputs[0, shuffle_idx]
+    batch_hit_labels[0, :] = batch_hit_labels[0, shuffle_idx]
+
+    inputs = torch.from_numpy(batch_inputs)
+    mask = torch.from_numpy(batch_mask)
+    hit_labels = torch.tensor(batch_hit_labels, dtype=torch.long).squeeze()
+    return inputs, hit_labels, mask
 
 
 def generate_event_from_params(event_gen, track_params, vertex):
@@ -262,6 +254,23 @@ def plot(
             right_title="Ground Truth",
         )
         side_by_side.write_html(pjoin(out_dir, str(i) + "_side_by_syde_filtered.html"))
+
+
+def plot_histograms(accuracies, vertex_dists, out_dir) -> None:
+    sns.displot(np.array(accuracies), bins=82, kde=True)
+    plt.ylabel("Probability")
+    plt.xlabel("Hit segmentation accuracy")
+    plt.title("Hit segmentation accuracy histogram")
+    plt.savefig(pjoin(out_dir, "accuracy_hist"))
+
+    sns.displot(np.array(vertex_dists), bins=82, kde=True)
+    plt.ylabel("Probability")
+    plt.xlabel("Vertex distance")
+    plt.title("Distances between predicted and real vertices")
+    plt.savefig(pjoin(out_dir, "vertex_hist"))
+    print(
+        f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
+    )
 
 
 def match_targets(outputs, targets):

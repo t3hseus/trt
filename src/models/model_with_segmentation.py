@@ -9,87 +9,41 @@ import torch.nn as nn
 
 
 class PointTransformerEncoder(nn.Module):
-    def __init__(self, in_channels=128, channels=128):
+    def __init__(
+        self,
+        in_channels=128,
+        channels=128,
+        num_layers=4,
+        n_heads: int = 2,
+        dropout: float = 0.1,
+    ):
         super().__init__()
         # channels = int(n_points / 4)
 
-        self.conv3 = nn.Conv1d(in_channels * 4, channels, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm1d(channels)
-        self.bn2 = nn.BatchNorm1d(channels)
-        self.norm1 = nn.LayerNorm(channels)
-        self.norm2 = nn.LayerNorm(channels)
-
-        self.sa1 = SALayer(channels)
-        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
-        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
-        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
-        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
-        self.sa2 = SALayer(channels)
-        self.sa3 = SALayer(channels)
-        self.sa4 = SALayer(channels)
-        self.feedforward1 = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.ReLU(),
-            nn.Linear(channels // 2, channels),
+        self.conv3 = nn.Conv1d(
+            in_channels * 4 * num_layers, channels, kernel_size=1, bias=False
         )
-        self.feedforward2 = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.ReLU(),
-            nn.Linear(channels // 2, channels),
+        self.layers = nn.ModuleList(
+            [
+                TransformerLayer(
+                    channels, n_heads, dim_feedforward=channels * 2, dropout=dropout
+                )
+                for _ in range(num_layers)
+            ]
         )
-        self.feedforward3 = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.ReLU(),
-            nn.Linear(channels // 2, channels),
-        )
-        self.feedforward4 = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.ReLU(),
-            nn.Linear(channels // 2, channels),
-        )
-        self.norm1 = nn.LayerNorm(channels)
-        self.norm2 = nn.LayerNorm(channels)
-
-        self.norm3 = nn.LayerNorm(channels)
-        self.norm4 = nn.LayerNorm(channels)
-
-        self.norm11 = nn.LayerNorm(channels)
-        self.norm21 = nn.LayerNorm(channels)
-
-        self.norm31 = nn.LayerNorm(channels)
-        self.norm41 = nn.LayerNorm(channels)
 
     def forward(self, inputs, mask=None):
-        #
-        # b, 3, npoint, nsample
-        # conv2d 3 -> 128 channels 1, 1
-        # b * npoint, c, nsample
-        # permute reshape
         batch_size, _, _ = inputs.size()
         x = inputs.permute(0, 2, 1)  # B, N, D  ((N, L, E_q) in MHAtt
-        # B, D, N
-        # x = f.relu(self.bn1(self.conv1(x)))
-        # x = f.relu(self.bn2(self.conv2(x)))
 
-        x1, _ = self.sa1_mh(x, x, x, key_padding_mask=~mask)
-        x1 = self.norm11(self.feedforward1(self.norm1(x + x1)))
-        x2, _ = self.sa1_mh(x1, x1, x1, key_padding_mask=~mask)
-        x2 = self.norm21(self.feedforward2(self.norm1(x1 + x2)))
-        x3, _ = self.sa1_mh(x2, x2, x2, key_padding_mask=~mask)
-        x3 = self.norm31(self.feedforward3(self.norm1(x2 + x3)))
-        x4, _ = self.sa1_mh(x3, x3, x3, key_padding_mask=~mask)
-        x4 = self.norm41(self.feedforward4(self.norm1(x3 + x4)))
+        xs = []
+        for layer in self.layers:
+            x = layer(x, ~mask)
+            xs.append(x)
 
-        # x2 = self.sa2(x1.permute(0,1,2), mask=mask)
-        # x3 = self.sa3(x2, mask=mask)
-        # x4 = self.sa4(x3, mask=mask)
-        # x = torch.cat((x1, x2, x3, x4), dim=-1)
-        # x = self.conv3(x)
-        # NOTE: changing this to just tranmsformer layers make loss worse again
-        return x4.permute(0, 2, 1)
+        return x.permute(0, 2, 1)
 
 
-# TODO: change kolchos layers to this
 class TransformerLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
         super(TransformerLayer, self).__init__()
@@ -106,10 +60,10 @@ class TransformerLayer(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+    def forward(self, src, src_key_padding_mask=None):
         # src has shape (batch_size, seq_len, d_model)
         attn_output, _ = self.self_attn(
-            src, src, src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
+            src, src, src, key_padding_mask=src_key_padding_mask
         )
         src = src + self.dropout(attn_output)
         src = self.norm1(src)

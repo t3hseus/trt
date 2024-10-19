@@ -101,12 +101,12 @@ def hungarian_loss(outputs, targets, distance: Callable, num_params: int = 7):
     return loss * num_params  # to maintain distance logic
 
 
-def weighted_loss(
+def weighted_distance(
     outputs: torch.Tensor,
     targets: torch.Tensor,
-    weights: tuple[float] = (0.1, 0.1, 0.8),
+    weights: tuple[float] = (0.1, 0.1, 0.8, 0.1),
 ) -> torch.Tensor:
-    weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False).unsqueeze(0).repeat(outputs.shape)
+    weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False)
     return torch.nn.functional.l1_loss(outputs * weights_, targets * weights_)
 
 
