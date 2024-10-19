@@ -22,8 +22,10 @@ def draw_event(
 
     fig = go.Figure()
     uniq_tracks = np.unique(labels)
-    colors = sample_colorscale(colorscale, uniq_tracks / uniq_tracks.max())
-
+    if len(uniq_tracks) > 1:
+        colors = sample_colorscale(colorscale, uniq_tracks / uniq_tracks.max())
+    else:
+        colors = ["blue"]
     for i, label in enumerate(uniq_tracks):
         track_hits = hits[labels == label]
         fig.add_trace(
