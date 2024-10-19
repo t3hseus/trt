@@ -5,13 +5,14 @@ from torch.nn import L1Loss
 
 
 def cardinality_error(
-        pred_tracks, pred_logits, target_tracks, threshold: float=0.5
+    pred_tracks, pred_logits, target_tracks, threshold: float = 0.5
 ) -> int:
     pred_tracks = pred_tracks[pred_logits > threshold]
     return len(pred_tracks) - len(target_tracks)
 
+
 def hits_distance(
-        pred_tracks, pred_logits, target_tracks, threshold: float=0.5
+    pred_tracks, pred_logits, target_tracks, threshold: float = 0.5
 ) -> int:
     pred_tracks = pred_tracks[pred_logits > threshold]
     return len(pred_tracks) - len(target_tracks)
@@ -19,15 +20,14 @@ def hits_distance(
 
 def match_targets(outputs, targets):
     cost_matrix = torch.cdist(outputs, targets, p=1)
-    row_ind, col_ind = linear_sum_assignment(
-        cost_matrix.cpu().detach().numpy()
-    )
+    row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
+
 
 def vertex_distance(
     outputs: torch.Tensor,
     targets: torch.Tensor,
-    weights: tuple[float] = (0.1, 0.1, 0.8)
+    weights: tuple[float] = (0.1, 0.1, 0.8),
 ) -> torch.Tensor:
     outputs = outputs.squeeze()
     vertex_target = targets[:, 0, :3]

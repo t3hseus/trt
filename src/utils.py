@@ -1,7 +1,6 @@
 import re
-from typing import Union
 from pathlib import Path
-
+from typing import Union
 
 CHECKPOINT_PATTERN = re.compile(r"epoch=(\d+)-step=(\d+)\.ckpt")
 

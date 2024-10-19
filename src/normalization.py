@@ -5,8 +5,9 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
+from src.constants import (OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE,
+                           THETA_RANGE)
 from src.data_generation import TrackParams, Vertex
-from src.constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
 
 DType = TypeVar("DType", bound=np.generic)
 NormTParamsArr = Annotated[npt.NDArray[DType], Literal[8]]
@@ -119,7 +120,7 @@ class TrackParamsNormalizer:
         self,
         norm_params_vector: NormTParamsArr,
         is_charge_categorical: bool = True,
-        is_numpy: bool = True
+        is_numpy: bool = True,
         # vx: np.float32,
         # vy: np.float32,
         # vz: np.float32,

@@ -239,13 +239,13 @@ class TRTDetectDecoder(nn.Module):
         query_key_padding_mask: torch.Tensor | None = None,
         memory_key_padding_mask: torch.Tensor | None = None,
         memory_pos: torch.Tensor | None = None,
-        query_pos: torch.Tensor | None = None
+        query_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         output = query
         if permute_input:
             # permute reshape
             memory = memory.permute(0, 2, 1)
-            #query_pos = query_pos.permute(0, 2, 1)
+            # query_pos = query_pos.permute(0, 2, 1)
             # B, N_mem, E_mem
         intermediate = []
         for layer in self.layers:
@@ -253,7 +253,7 @@ class TRTDetectDecoder(nn.Module):
                 query=output,
                 memory=memory,
                 query_mask=query_mask,
-                #memory_mask=memory_mask,
+                # memory_mask=memory_mask,
                 # query_key_padding_mask=query_key_padding_mask,
                 memory_key_padding_mask=memory_mask,
                 # memory_pos=memory_pos,
@@ -271,13 +271,7 @@ class TRTDetectDecoder(nn.Module):
 
 
 class TRTDetectDecoderLayer(nn.Module):
-    def __init__(
-            self,
-            channels=128,
-            dim_feedforward=64,
-            nhead=2,
-            dropout=0.2
-    ):
+    def __init__(self, channels=128, dim_feedforward=64, nhead=2, dropout=0.2):
         super().__init__()
 
         self.self_attn = nn.MultiheadAttention(
@@ -359,23 +353,17 @@ class TRTHybrid(nn.Module):
             nn.LeakyReLU(negative_slope=0.2),
         )
         self.encoder = PointNet2(
-            num_points=self.n_points,
-            base_radius=0.2,
-            in_channel=3
+            num_points=self.n_points, base_radius=0.2, in_channel=3
         )  # PointTransformerEncoder(channels=channels)
 
         self.query_embed = nn.Embedding(
             num_embeddings=num_candidates, embedding_dim=channels
         )
         self.decoder = TRTDetectDecoder(
-            channels=channels,
-            dim_feedforward=channels // 2,
-            nhead=2,
-            dropout=dropout
+            channels=channels, dim_feedforward=channels // 2, nhead=2, dropout=dropout
         )
         self.class_head = nn.Sequential(
-            nn.Linear(channels, num_classes + 1),
-            nn.Dropout(p=dropout)
+            nn.Linear(channels, num_classes + 1), nn.Dropout(p=dropout)
         )
         self.params_head = nn.Sequential(
             nn.Linear(channels, num_out_params * 2, bias=False),
@@ -386,9 +374,7 @@ class TRTHybrid(nn.Module):
             nn.LeakyReLU(negative_slope=0.2),
         )
 
-    def forward(
-            self, inputs, mask=None, orig_params=None
-    ) -> dict[str, torch.Tensor]:
+    def forward(self, inputs, mask=None, orig_params=None) -> dict[str, torch.Tensor]:
         """
         It returns a dict with the following elements:
            - "pred_logits": the classification logits (including no-object) for all
@@ -405,13 +391,13 @@ class TRTHybrid(nn.Module):
         # Reshape mask to fit attention mechanism [batch_size, 1, 1, seq_len] for some attention implementations
         # If needed, you can reshape it for the multi-head attention.
         attention_mask = mask.unsqueeze(1).unsqueeze(
-            2)  # Shape [1, 1, 512] or [batch_size, 1, 1, 512]
+            2
+        )  # Shape [1, 1, 512] or [batch_size, 1, 1, 512]
 
-        #x = self.emb_encoder(inputs)
+        # x = self.emb_encoder(inputs)
         x_encoder = self.encoder(inputs, mask=mask)
         # decoder transformer
-        query_pos_embed = self.query_embed.weight.unsqueeze(
-            0).repeat(batch_size, 1, 1)
+        query_pos_embed = self.query_embed.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(
@@ -419,10 +405,10 @@ class TRTHybrid(nn.Module):
             query=x_decoder,
             query_pos=query_pos_embed,
             memory_mask=mask,
-            permute_input=True  # To maintain B, Q_l, E_d and B, X_len, E_d
+            permute_input=True,  # To maintain B, Q_l, E_d and B, X_len, E_d
         )
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
-        #I'd rather use no activation
+        # I'd rather use no activation
         outputs_coord = self.params_head(
             x
         ).sigmoid()  # params are normalized after sigmoid!!
@@ -430,7 +416,6 @@ class TRTHybrid(nn.Module):
             "logits": outputs_class,
             "params": outputs_coord,
         }
-
 
 
 if __name__ == "__main__":

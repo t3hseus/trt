@@ -1,28 +1,19 @@
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
 
 from src.constants import OZ_RANGE
-from src.data_generation import (
-    ArrayNx3,
-    TrackParams,
-    Vertex,
-    TorchTrackParams,
-    TorchVertex,
-    TorchPoint,
-    TorchMomentum,
-    SPDEventGenerator,
-)
-from src.normalization import ConstraintsNormalizer, TParamsArr, TrackParamsNormalizer
-from typing import Tuple, Literal, Optional, Union
+from src.data_generation import (ArrayNx3, SPDEventGenerator, TorchMomentum,
+                                 TorchPoint, TorchTrackParams, TorchVertex,
+                                 TrackParams, Vertex)
+from src.normalization import (ConstraintsNormalizer, TParamsArr,
+                               TrackParamsNormalizer)
 
 # typing
 Hits = np.ndarray[Literal["N", 3], np.dtype[np.float32]]
 TrackIDs = np.ndarray[
-    Literal[
-        "N",
-    ],
+    Literal["N",],
     np.dtype[np.int32],
 ]
 

@@ -1,14 +1,14 @@
-import hydra
 import logging
 import os
 import warnings
+from argparse import ArgumentParser
+from typing import Callable, List, Optional, Union
+
+import hydra
 import pytorch_lightning as pl
 import torchmetrics as tm
-
-from typing import Callable, List, Optional, Union
-from argparse import ArgumentParser
-from omegaconf import DictConfig
 from hydra.utils import instantiate
+from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn, optim
@@ -16,15 +16,14 @@ from torch.utils.data import DataLoader
 
 from src.dataset import DatasetMode, SPDEventsDataset
 from src.deprecated.dataset import collate_fn
+from src.deprecated.training import TrainModel
 from src.logging_utils import setup_logger
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.deprecated.training import TrainModel
 
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 
 argparser = ArgumentParser()
-argparser.add_argument("--config", type=str,
-                       help="Path to the config file to use.")
+argparser.add_argument("--config", type=str, help="Path to the config file to use.")
 argparser.add_argument(
     "--log",
     type=str,
@@ -160,8 +159,7 @@ def main(cfg: DictConfig):
         detector_efficiency=cfg.dataset.detector_efficiency,
         truncation_length=cfg.dataset.truncation_length,
         hits_normalizer=instantiate(cfg.dataset.hits_normalizer),
-        track_params_normalizer=instantiate(
-            cfg.dataset.track_params_normalizer),
+        track_params_normalizer=instantiate(cfg.dataset.track_params_normalizer),
         num_epochs=cfg.num_epochs,
         train_batch_size=cfg.train_batch_size,
         val_batch_size=cfg.val_batch_size,

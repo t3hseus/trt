@@ -1,10 +1,11 @@
 # taken from https://github.com/facebookresearch/detr/blob/master/models/detr.py
 import torch
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from src.deprecated.matcher import HungarianMatcher
-from src.deprecated.postprocess import TorchTrackGenerator, EventRecoveryFromPredictions
+from src.deprecated.postprocess import (EventRecoveryFromPredictions,
+                                        TorchTrackGenerator)
 
 
 class MatchingLoss(nn.Module):
@@ -51,7 +52,7 @@ class MatchingLoss(nn.Module):
         self.torch_hits_generator = hits_generator
         # We need to get one class based on torch for convenience (i think) to get loss
         # and dataset
-        self.event_generator = event_generator # For visualization purposes
+        self.event_generator = event_generator  # For visualization purposes
         # place buffer to the appropiate device
         if torch.cuda.is_available():
             device = "cuda"
@@ -170,7 +171,7 @@ class MatchingLoss(nn.Module):
         # target_charges = torch.cat(
         #    [t["class_labels"][i] for t, (_, i) in zip(targets, indices)], dim=0
         # )
-        #unnormalize charge
+        # unnormalize charge
         target_charges = target_params[..., -1]
         target_charges = target_charges.to(torch.float) * 2 - 1
         target_charges = target_charges.unsqueeze(-1)
@@ -183,9 +184,7 @@ class MatchingLoss(nn.Module):
         if not (len(source_tracks)):
             return torch.tensor(1000.0)
         num_tracks = 0
-        for pred_track, target_track in zip(
-            source_tracks, target_tracks
-        ):
+        for pred_track, target_track in zip(source_tracks, target_tracks):
             # it is crucial to use paddings in case of tracks with different lengths
             n_stations = max(pred_track.shape[0], target_track.shape[0])
             target_track_padded = torch.zeros(

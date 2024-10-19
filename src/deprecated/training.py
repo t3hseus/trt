@@ -1,23 +1,23 @@
 import io
-import torch
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Union
+
+import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
+import pytorch_lightning as pl
+import torch
 import torch.nn as nn
 import torchmetrics as tm
-import pytorch_lightning as pl
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-
-from typing import Optional, Callable, Dict, List, Union
-from typing_extensions import Self
 from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
-from pathlib import Path
 from PIL import Image
 from torch import optim
+from typing_extensions import Self
 
 from src.dataset import BatchSample
-from src.visualization import draw_event
 from src.utils import get_latest_checkpoint
+from src.visualization import draw_event
 
 
 class TrainModel(pl.LightningModule):

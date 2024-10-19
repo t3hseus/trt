@@ -229,8 +229,7 @@ class TRT(nn.Module):
             channels=channels, dim_feedforward=channels // 2, nhead=2, dropout=dropout
         )
         self.class_head = nn.Sequential(
-            nn.Linear(channels, num_classes + 1),
-            nn.Dropout(p=dropout)
+            nn.Linear(channels, num_classes + 1), nn.Dropout(p=dropout)
         )
         self.params_head = nn.Sequential(
             nn.Linear(channels, num_out_params * 2, bias=False),
@@ -241,9 +240,7 @@ class TRT(nn.Module):
             nn.LeakyReLU(negative_slope=0.2),
         )
 
-    def forward(
-            self, inputs, mask=None, orig_params=None
-    ) -> dict[str, torch.Tensor]:
+    def forward(self, inputs, mask=None, orig_params=None) -> dict[str, torch.Tensor]:
         """
         It returns a dict with the following elements:
            - "pred_logits": the classification logits (including no-object) for all
@@ -260,8 +257,7 @@ class TRT(nn.Module):
         x = self.emb_encoder(inputs)
         x_encoder = self.encoder(x, mask=mask)
         # decoder transformer
-        query_pos_embed = self.query_embed.weight.unsqueeze(
-            0).repeat(batch_size, 1, 1)
+        query_pos_embed = self.query_embed.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         x_decoder = torch.zeros_like(query_pos_embed)
 
         x = self.decoder(x_encoder, x_decoder, query_pos_embed, mask=mask)

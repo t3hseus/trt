@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import torch
 
-from src.dataset import DatasetSample, BatchSample
+from src.dataset import BatchSample, DatasetSample
 
 
 def collate_fn(samples: List[DatasetSample]) -> BatchSample:
@@ -57,9 +57,7 @@ def collate_fn_for_set_loss(samples: List[DatasetSample]) -> BatchSample:
     batch_size = len(samples)
     n_features = samples[0]["hits"].shape[-1]
 
-    batch_inputs = np.zeros(
-        (batch_size, max_n_hits, n_features), dtype=np.float32
-    )
+    batch_inputs = np.zeros((batch_size, max_n_hits, n_features), dtype=np.float32)
     batch_mask = np.zeros((batch_size, max_n_hits), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
@@ -67,17 +65,15 @@ def collate_fn_for_set_loss(samples: List[DatasetSample]) -> BatchSample:
     batch_orig_params = np.zeros(target_shape, dtype=np.float32)
 
     for i, sample in enumerate(samples):
-        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
-        batch_mask[i, :len(sample["hits"])] = sample["mask"]
-        batch_targets[i, :len(sample["params"])] = sample["params"]
-        batch_orig_params[
-            i, :len(sample["orig_params"])
-        ] = sample["orig_params"]
+        batch_inputs[i, : len(sample["hits"])] = sample["hits"]
+        batch_mask[i, : len(sample["hits"])] = sample["mask"]
+        batch_targets[i, : len(sample["params"])] = sample["params"]
+        batch_orig_params[i, : len(sample["orig_params"])] = sample["orig_params"]
 
     return BatchSample(
         inputs=torch.from_numpy(batch_inputs),
         mask=torch.from_numpy(batch_mask),
         targets=torch.from_numpy(batch_targets),
         orig_params=torch.from_numpy(batch_orig_params),
-        n_tracks_per_sample=torch.LongTensor(n_tracks_per_sample)
+        n_tracks_per_sample=torch.LongTensor(n_tracks_per_sample),
     )

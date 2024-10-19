@@ -11,10 +11,10 @@ from tqdm import tqdm
 
 from src.dataset import (DatasetMode, SPDEventsDataset,
                          collate_fn_with_class_loss)
+from src.loss import TRTHungarianLoss
 from src.metrics import vertex_distance
 from src.models.model_okey import TRTHybrid
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.loss import TRTHungarianLoss
 
 seed_everything(13)
 
@@ -244,7 +244,7 @@ def val_epoch(
     val_loss = 0
     num_val_batches = 0
     model.eval()
-    params_only_dist = TRTHungarianLoss(weights=(1., 0.0, 0.0), intermediate=False).to(
+    params_only_dist = TRTHungarianLoss(weights=(1.0, 0.0, 0.0), intermediate=False).to(
         device
     )
     for batch in val_loader:

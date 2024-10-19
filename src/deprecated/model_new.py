@@ -138,7 +138,7 @@ class TRTDetectDecoder(nn.Module):
         query_key_padding_mask: torch.Tensor | None = None,
         memory_key_padding_mask: torch.Tensor | None = None,
         memory_pos: torch.Tensor | None = None,
-        query_pos: torch.Tensor | None = None
+        query_pos: torch.Tensor | None = None,
     ) -> torch.Tensor:
         output = query
         if permute_input:
@@ -308,7 +308,7 @@ class TRT(nn.Module):
             x
         ).sigmoid()  # params are normalized after sigmoid!!
         return {
-            #"logits": outputs_class,
+            # "logits": outputs_class,
             "params": outputs_coord,
         }
 

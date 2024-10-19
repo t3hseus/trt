@@ -6,12 +6,8 @@ import torch
 from torch.utils.data import Dataset
 
 from .data_generation import ArrayN, ArrayNx3, SPDEventGenerator
-from .normalization import (
-    ConstraintsNormalizer,
-    NormTParamsArr,
-    TParamsArr,
-    TrackParamsNormalizer,
-)
+from .normalization import (ConstraintsNormalizer, NormTParamsArr, TParamsArr,
+                            TrackParamsNormalizer)
 
 
 class DatasetMode(IntEnum):
@@ -39,6 +35,7 @@ class BatchSample(TypedDict):
 
 class BatchSampleWithLogits(BatchSample):
     labels: torch.LongTensor
+
 
 class BatchSampleWithHitLabels(BatchSampleWithLogits):
     hit_labels: torch.LongTensor
@@ -120,9 +117,7 @@ class SPDEventsDataset(Dataset):
         # param_labels = np.full(
         #     self._max_event_tracks, self._padding_label, dtype=np.int32
         # )
-        param_labels = np.zeros(
-            len(event.track_params.items()), dtype=np.int32
-        )
+        param_labels = np.zeros(len(event.track_params.items()), dtype=np.int32)
 
         for i, (track_id, track_params) in enumerate(event.track_params.items()):
             # normalize track parameters if needed
@@ -182,9 +177,7 @@ def collate_fn_with_class_loss(samples: List[DatasetSample]) -> BatchSample:
     batch_size = len(samples)
     n_features = samples[0]["hits"].shape[-1]
 
-    batch_inputs = np.zeros(
-        (batch_size, max_n_hits, n_features), dtype=np.float32
-    )
+    batch_inputs = np.zeros((batch_size, max_n_hits, n_features), dtype=np.float32)
     batch_mask = np.zeros((batch_size, max_n_hits), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
@@ -193,13 +186,11 @@ def collate_fn_with_class_loss(samples: List[DatasetSample]) -> BatchSample:
     batch_labels = np.ones((batch_size, max_n_tracks), dtype=np.int32)
 
     for i, sample in enumerate(samples):
-        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
-        batch_mask[i, :len(sample["hits"])] = sample["mask"]
-        batch_params[i, :len(sample["params"])] = sample["params"]
-        batch_labels[i, :len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
-        batch_orig_params[
-        i, :len(sample["orig_params"])
-        ] = sample["orig_params"]
+        batch_inputs[i, : len(sample["hits"])] = sample["hits"]
+        batch_mask[i, : len(sample["hits"])] = sample["mask"]
+        batch_params[i, : len(sample["params"])] = sample["params"]
+        batch_labels[i, : len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
+        batch_orig_params[i, : len(sample["orig_params"])] = sample["orig_params"]
 
     return BatchSampleWithLogits(
         inputs=torch.tensor(batch_inputs, dtype=torch.float),

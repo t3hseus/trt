@@ -1,30 +1,28 @@
+import os
+# change working directory to make src visible
+# os.chdir(Path.cwd().parent)
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import scipy.stats as st
-from pathlib import Path
 import seaborn as sns
-
 from pytorch_lightning import seed_everything
-# change working directory to make src visible
-#os.chdir(Path.cwd().parent)
-import sys
-
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
 
 sys.path.append("../")
-from src.data_generation import SPDEventGenerator
-from src.visualization import draw_event
-from src.model_hybrid import TRTHybrid
+from os.path import join as pjoin
+
 import torch
+
+from src.data_generation import SPDEventGenerator, TrackParams, Vertex
+from src.model_hybrid import TRTHybrid
 from src.models.model_with_segment import TRTHybrid
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.data_generation import Vertex, TrackParams
-from src.visualization import display_side_by_side
-from os.path import join as pjoin
+from src.visualization import display_side_by_side, draw_event
 
 MAX_EVENT_TRACKS = 5
 TRUNCATION_LENGTH = 1024
@@ -36,18 +34,17 @@ PATH = r"weights\best\trt_hybrid_val.pt"
 
 seed_everything(13)
 
+
 def inference(
-        weights_path: str = PATH,
-        num_events: int = NUM_EVENTS_VALID,
-        truncation_length: int = 1024,
-        max_event_tracks: int = MAX_EVENT_TRACKS,
-        num_images: int = NUM_IMAGES,
-        result_dir: str = "plots"
+    weights_path: str = PATH,
+    num_events: int = NUM_EVENTS_VALID,
+    truncation_length: int = 1024,
+    max_event_tracks: int = MAX_EVENT_TRACKS,
+    num_images: int = NUM_IMAGES,
+    result_dir: str = "plots",
 ):
     out_dir = pjoin(
-        result_dir,
-        datetime.today().strftime("%Y-%m-%d"),
-        PATH.split("\\")[-2]
+        result_dir, datetime.today().strftime("%Y-%m-%d"), PATH.split("\\")[-2]
     )
     os.makedirs(out_dir, exist_ok=True)
 
@@ -79,7 +76,7 @@ def inference(
         batch_mask = np.ones((batch_size, maxlen), dtype=bool)
         # params have the fixed size - MAX_TRACKS x N_PARAMS
         batch_inputs[0, : len(hits)] = hits_norm
-        batch_inputs[0, len(hits):] = fakes_norm  # add fakes!
+        batch_inputs[0, len(hits) :] = fakes_norm  # add fakes!
         batch_hit_labels[0, : len(hits)] = mask  # hit label to check segmentation
         shuffle_idx = np.random.permutation(maxlen)
         batch_inputs[0, :] = batch_inputs[0, shuffle_idx]
@@ -91,10 +88,13 @@ def inference(
         preds = model(inputs=inputs, mask=mask)
         track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
-        pred_hits, pred_labels = generate_event_from_params(event_gen, pred_tracks, pred_vertex)
+        pred_hits, pred_labels = generate_event_from_params(
+            event_gen, pred_tracks, pred_vertex
+        )
         vertex_dists.append(
-            np.abs(pred_vertex.x - event.vertex.x) + np.abs(pred_vertex.y - event.vertex.y) + np.abs(
-                pred_vertex.z - event.vertex.z)
+            np.abs(pred_vertex.x - event.vertex.x)
+            + np.abs(pred_vertex.y - event.vertex.y)
+            + np.abs(pred_vertex.z - event.vertex.z)
         )
         target_tracks = []
         for label in np.unique(labels):
@@ -109,28 +109,37 @@ def inference(
 
         target_hit_labels = torch.tensor(batch_hit_labels, dtype=torch.long).squeeze()
         accuracies.append(
-            (
-                    target_hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()
-            ).sum() / len(target_hit_labels)
+            (target_hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()).sum()
+            / len(target_hit_labels)
         )
 
         if i in plot_events:
             plot(
-                i, event_gen, event, pred_hits, pred_labels, pred_tracks, pred_vertex, track_mask, out_dir
+                i,
+                event_gen,
+                event,
+                pred_hits,
+                pred_labels,
+                pred_tracks,
+                pred_vertex,
+                track_mask,
+                out_dir,
             )
 
     sns.displot(np.array(accuracies), bins=82, kde=True)
-    plt.ylabel('Probability')
-    plt.xlabel('Hit segmentation accuracy')
+    plt.ylabel("Probability")
+    plt.xlabel("Hit segmentation accuracy")
     plt.title("Hit segmentation accuracy histogram")
     plt.savefig(pjoin(out_dir, "accuracy_hist"))
 
     sns.displot(np.array(vertex_dists), bins=82, kde=True)
-    plt.ylabel('Probability')
-    plt.xlabel('Vertex distance')
+    plt.ylabel("Probability")
+    plt.xlabel("Vertex distance")
     plt.title("Distances between predicted and real vertices")
     plt.savefig(pjoin(out_dir, "vertex_hist"))
-    print(f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}")
+    print(
+        f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
+    )
 
 
 def generate_event_from_params(event_gen, track_params, vertex):
@@ -173,7 +182,11 @@ def convert_preds_to_param_vertex(preds):
     tracks = {}
     for i, para_only in enumerate(params):
         para_t = torch.cat([vertex_torch, para_only], dim=0)
-        para = TrackParamsNormalizer().denormalize(para_t.detach().cpu().numpy(), is_charge_categorical=True).astype(float)
+        para = (
+            TrackParamsNormalizer()
+            .denormalize(para_t.detach().cpu().numpy(), is_charge_categorical=True)
+            .astype(float)
+        )
         if i == 0:
             vertex = para[:3]
         para_obj = TrackParams(pt=para[3], phi=para[4], theta=para[5], charge=para[6])
@@ -183,7 +196,15 @@ def convert_preds_to_param_vertex(preds):
 
 
 def plot(
-        i, event_gen, event, pred_hits, pred_labels, pred_tracks, pred_vertex, track_mask, out_dir
+    i,
+    event_gen,
+    event,
+    pred_hits,
+    pred_labels,
+    pred_tracks,
+    pred_vertex,
+    track_mask,
+    out_dir,
 ):
     real_event = draw_event(
         hits=event.hits,
@@ -245,9 +266,7 @@ def plot(
 
 def match_targets(outputs, targets):
     cost_matrix = torch.cdist(outputs, targets, p=1)
-    row_ind, col_ind = linear_sum_assignment(
-        cost_matrix.cpu().detach().numpy()
-    )
+    row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
 
 
@@ -294,11 +313,11 @@ def nearest_tracks_dist(gt_tracks, pred_tracks):
             # Select the first 'min_length' points from both tracks
             for k, z in enumerate(pred_track[:, 2]):
                 if k < len(gt_track):
-                    hit_dist = np.abs(
-                        gt_track[k, 0] - pred_track[k, 1]
-                    ) + np.abs(
-                        gt_track[k, 1] - pred_track[k, 1]
-                    ) + np.abs(gt_track[k, 2] - pred_track[k, 2])
+                    hit_dist = (
+                        np.abs(gt_track[k, 0] - pred_track[k, 1])
+                        + np.abs(gt_track[k, 1] - pred_track[k, 1])
+                        + np.abs(gt_track[k, 2] - pred_track[k, 2])
+                    )
                     total_distances[j] += hit_dist
                     max_t_distances[j] = max(max_t_distances[j], hit_dist)
 
@@ -307,7 +326,11 @@ def nearest_tracks_dist(gt_tracks, pred_tracks):
         nearest_indices[i] = nearest_idx
         distances[i] = total_distances[nearest_idx]
         max_distances[i] = max_t_distances[nearest_idx]
-    return {"dist": distances, "max_hit_dist": max_distances, "near_index": nearest_indices}
+    return {
+        "dist": distances,
+        "max_hit_dist": max_distances,
+        "near_index": nearest_indices,
+    }
 
 
 if __name__ == "__main__":

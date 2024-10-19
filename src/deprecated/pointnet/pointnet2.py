@@ -2,18 +2,22 @@
 Used code from:
 https://github.com/yanx27/Pointnet_Pointnet2_pytorch
 """
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
-from src.deprecated.pointnet.pointnet_utils import (
-    PointNetSetAbstraction,
-    PointNetFeaturePropagation,
-)
+
+from src.deprecated.pointnet.pointnet_utils import (PointNetFeaturePropagation,
+                                                    PointNetSetAbstraction)
 
 
 class PointNet2(nn.Module):
     def __init__(
-        self, num_points: int = 1024, base_radius: float = 0.1, in_channel: int = 3, out_channel: int = 256
+        self,
+        num_points: int = 1024,
+        base_radius: float = 0.1,
+        in_channel: int = 3,
+        out_channel: int = 256,
     ):
         super(PointNet2, self).__init__()
         self.sa1 = PointNetSetAbstraction(

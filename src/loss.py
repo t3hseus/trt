@@ -101,6 +101,15 @@ def hungarian_loss(outputs, targets, distance: Callable, num_params: int = 7):
     return loss * num_params  # to maintain distance logic
 
 
+def weighted_loss(
+    outputs: torch.Tensor,
+    targets: torch.Tensor,
+    weights: tuple[float] = (0.1, 0.1, 0.8),
+) -> torch.Tensor:
+    weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False).unsqueeze(0).repeat(outputs.shape)
+    return torch.nn.functional.l1_loss(outputs * weights_, targets * weights_)
+
+
 class TRTHungarianLoss(nn.Module):
     def __init__(
         self,
@@ -205,11 +214,11 @@ class TRTHungarianLoss(nn.Module):
 
 class TRTLossWithSegment(TRTHungarianLoss):
     def forward(
-            self,
-            preds: dict[str, torch.Tensor],
-            targets: dict[str, torch.Tensor],
-            preds_lengths,
-            targets_lengths,
+        self,
+        preds: dict[str, torch.Tensor],
+        targets: dict[str, torch.Tensor],
+        preds_lengths,
+        targets_lengths,
     ):
         loss_base = super().forward(preds, targets, preds_lengths, targets_lengths)
         batch_size = preds["params"].shape[0]
@@ -217,15 +226,14 @@ class TRTLossWithSegment(TRTHungarianLoss):
         loss_segment = torch.tensor(0.0).to(preds_segment.device)
         for i in range(batch_size):
             loss_segment += class_loss(
-                preds_segment[i],
-                targets["hit_labels"][i],
-                loss_fn=self._class_loss
+                preds_segment[i], targets["hit_labels"][i], loss_fn=self._class_loss
             )
         return loss_base + self._weights[3] * loss_segment
 
 
 def class_loss(outputs, targets, loss_fn: Callable):
     return loss_fn(outputs, targets)
+
 
 if __name__ == "__main__":
     loss = TRTHungarianLoss()
@@ -243,4 +251,6 @@ if __name__ == "__main__":
     pred_lengths = [25 for i in range(16)]
     preds = {"params": preds_coord, "vertex": preds_vertex, "logits": preds_labels}
     targets = {"targets": targets, "labels": target_labels}
-    loss_val = loss(preds, targets, preds_lengths=pred_lengths, targets_lengths=target_lengths)
+    loss_val = loss(
+        preds, targets, preds_lengths=pred_lengths, targets_lengths=target_lengths
+    )

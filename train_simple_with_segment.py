@@ -8,23 +8,24 @@ from pytorch_lightning import seed_everything
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchmetrics import Precision, Metric
+from torchmetrics import Metric, Precision
 from tqdm import tqdm
 
-from src.dataset import (DatasetMode, SPDEventsDataset, collate_fn_with_segment_loss)
+from src.dataset import (DatasetMode, SPDEventsDataset,
+                         collate_fn_with_segment_loss)
+from src.loss import TRTHungarianLoss, TRTLossWithSegment
 from src.metrics import vertex_distance
 from src.models.model_with_segment import TRTHybrid
 from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
-from src.loss import TRTHungarianLoss, TRTLossWithSegment
 
 seed_everything(13)
 
 MAX_EVENT_TRACKS = 5
-NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
+NUM_CANDIDATES = MAX_EVENT_TRACKS * 10
 TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 32
-NUM_EVENTS_TRAIN = 32  # 50000
-NUM_EVENTS_VALID = 32  # 10000
+NUM_EVENTS_TRAIN = 50000
+NUM_EVENTS_VALID = 1000
 INTERMEDIATE = False
 
 
@@ -60,6 +61,8 @@ def main():
         num_out_params=7,
         return_intermediate=INTERMEDIATE,
     ).to(device)
+    # model.load_state_dict(torch.load(r"weights\best\trt_hybrid_val.pt", weights_only=True))
+
     criterion = TRTLossWithSegment(
         weights=(0.33, 0.33, 0.33, 0.03), intermediate=INTERMEDIATE
     ).to(device)
@@ -160,9 +163,11 @@ def calc_metrics(outputs, batch, device, hit_metrics: dict[str, Metric]):
     params = outputs["params"][-1].to(device) if INTERMEDIATE else outputs["params"]
     logits = outputs["logits"][-1].to(device) if INTERMEDIATE else outputs["logits"]
     vertex = outputs["vertex"]
-    hits_classes = outputs["hit_logits"][:, :,  1].to(device)
+    hits_classes = outputs["hit_logits"][:, :, 1].to(device)
     for metric in hit_metrics:
-        res_dict[metric] = hit_metrics[metric](hits_classes, batch["hit_labels"].to(device))
+        res_dict[metric] = hit_metrics[metric](
+            hits_classes, batch["hit_labels"].to(device)
+        )
     vertex_dist = vertex_distance(vertex, batch["targets"].to(device))
     last_out_params_dist = params_only_dist(
         preds={"params": params, "logits": logits, "vertex": vertex},
@@ -179,6 +184,7 @@ def calc_metrics(outputs, batch, device, hit_metrics: dict[str, Metric]):
     )
     return {"vertex_dist": vertex_dist, "params_dist": last_out_params_dist, **res_dict}
 
+
 def train_epoch(
     model: nn.Module,
     train_loader: torch.utils.data.DataLoader,
@@ -193,9 +199,15 @@ def train_epoch(
     train_loss = 0.0
     num_train_batches = 0
     hits_metrics = {
-        "accuracy": torchmetrics.classification.Accuracy(task="binary", threshold=0.5).to(device),
-        "preccision": torchmetrics.classification.Precision(task="binary", threshold=0.5).to(device),
-        "recall": torchmetrics.classification.Recall(task="binary", threshold=0.5).to(device),
+        "accuracy": torchmetrics.classification.Accuracy(
+            task="binary", threshold=0.5
+        ).to(device),
+        "preccision": torchmetrics.classification.Precision(
+            task="binary", threshold=0.5
+        ).to(device),
+        "recall": torchmetrics.classification.Recall(task="binary", threshold=0.5).to(
+            device
+        ),
     }
 
     for batch in train_loader:
@@ -227,10 +239,10 @@ def train_epoch(
         )
         for metric in batch_metrics:
             writer.add_scalar(
-                "train_"+metric,
+                "train_" + metric,
                 batch_metrics[metric],
                 epoch * len(train_loader) + num_train_batches,
-         )
+            )
 
     if train_loss < min_loss_train:
         min_loss_train = train_loss
@@ -239,7 +251,11 @@ def train_epoch(
 
     writer.add_scalar("train_loss_epoch", train_loss / len(train_loader), epoch)
     for metric in hits_metrics:
-        writer.add_scalar(f"train_{metric}_epoch", hits_metrics[metric].compute() / len(train_loader), epoch)
+        writer.add_scalar(
+            f"train_{metric}_epoch",
+            hits_metrics[metric].compute() / len(train_loader),
+            epoch,
+        )
     return train_loss, min_loss_train
 
 
@@ -257,9 +273,15 @@ def val_epoch(
     num_val_batches = 0
     model.eval()
     hits_metrics = {
-        "accuracy": torchmetrics.classification.Accuracy(task="binary", threshold=0.5).to(device),
-        "preccision": torchmetrics.classification.Precision(task="binary", threshold=0.5).to(device),
-        "recall": torchmetrics.classification.Recall(task="binary", threshold=0.5).to(device),
+        "accuracy": torchmetrics.classification.Accuracy(
+            task="binary", threshold=0.5
+        ).to(device),
+        "preccision": torchmetrics.classification.Precision(
+            task="binary", threshold=0.5
+        ).to(device),
+        "recall": torchmetrics.classification.Recall(task="binary", threshold=0.5).to(
+            device
+        ),
     }
     for batch in val_loader:
         num_val_batches += 1
@@ -301,7 +323,7 @@ def val_epoch(
         writer.add_scalar(
             f"train_{metric}_epoch",
             hits_metrics[metric].compute() / len(val_loader),
-            epoch
+            epoch,
         )
     return val_loss, min_loss_val
 
