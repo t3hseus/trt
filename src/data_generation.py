@@ -119,6 +119,12 @@ class TrackParams:
             [self.pt, self.phi, self.theta, self.charge], dtype=np.float32
         )
 
+    @cached_property
+    def torch(self):
+        return torch.tensor(
+            [self.pt, self.phi, self.theta, self.charge], dtype=torch.float32
+        )
+
     def __str__(self) -> str:
         return (
             f"TrackParams(pt={self.pt:.2f}, phi={self.phi:.2f}, "

@@ -5,8 +5,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-from src.constants import (OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE,
-                           THETA_RANGE)
+from src.constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
 from src.data_generation import TrackParams, Vertex
 
 DType = TypeVar("DType", bound=np.generic)
@@ -15,9 +14,9 @@ TParamsArr = Annotated[npt.NDArray[DType], Literal[7]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
 
 
-class ConstraintsNormalizer:
-    """MinMax scaler in range from -1 to 1
-    for each coordinate
+class HitsNormalizer:
+    """
+    MinMax scaler in range from -1 to 1 for each coordinate
     """
 
     def __init__(
@@ -25,32 +24,53 @@ class ConstraintsNormalizer:
         x_coord_range: Tuple[float, float] = OX_RANGE,
         y_coord_range: Tuple[float, float] = OY_RANGE,
         z_coord_range: Tuple[float, float] = OZ_RANGE,
-    ):
+    ) -> None:
         self._x_min, self._x_max = x_coord_range
         self._y_min, self._y_max = y_coord_range
         self._z_min, self._z_max = z_coord_range
 
     @staticmethod
-    def normalize(
-        x: Union[np.float32, np.ndarray],
+    def _normalize(
+        x: Union[np.float32, npt.NDArray],
         min_val: float,
         max_val: float,
-    ) -> Union[np.float32, np.ndarray]:
+    ) -> Union[np.float32, npt.NDArray]:
         return 2 * (x - min_val) / (max_val - min_val) - 1
 
-    def __call__(self, inputs: ArrayNx3[np.float32]) -> ArrayNx3[np.float32]:
-        x_norm = self.normalize(inputs[:, 0], self._x_min, self._x_max)
-        y_norm = self.normalize(inputs[:, 1], self._y_min, self._y_max)
-        z_norm = self.normalize(inputs[:, 2], self._z_min, self._z_max)
+    @staticmethod
+    def _denormalize(
+        x: Union[np.float32, npt.NDArray],
+        min_val: float,
+        max_val: float,
+    ) -> Union[np.float32, npt.NDArray]:
+        return (x + 1) * (max_val - min_val) / 2 + min_val
+
+    def normalize(self, inputs: ArrayNx3[np.float32]) -> ArrayNx3[np.float32]:
+        x_norm = self._normalize(inputs[:, 0], self._x_min, self._x_max)
+        y_norm = self._normalize(inputs[:, 1], self._y_min, self._y_max)
+        z_norm = self._normalize(inputs[:, 2], self._z_min, self._z_max)
         norm_inputs = np.hstack(
             [x_norm.reshape(-1, 1), y_norm.reshape(-1, 1), z_norm.reshape(-1, 1)]
         )
         return norm_inputs
 
+    def denormalize(self, inputs: ArrayNx3[np.float32]) -> ArrayNx3[np.float32]:
+        x_norm = self._denormalize(inputs[:, 0], self._x_min, self._x_max)
+        y_norm = self._denormalize(inputs[:, 1], self._y_min, self._y_max)
+        z_norm = self._denormalize(inputs[:, 2], self._z_min, self._z_max)
+        denorm_inputs = np.hstack(
+            [x_norm.reshape(-1, 1), y_norm.reshape(-1, 1), z_norm.reshape(-1, 1)]
+        )
+        return denorm_inputs
+
+    def __call__(self, inputs: ArrayNx3[np.float32]) -> ArrayNx3[np.float32]:
+        return self.normalize(inputs)
+
 
 @gin.configurable
 class TrackParamsNormalizer:
-    """Prepares track params vector to be fed to NN loss function by
+    """
+    Prepares track params vector to be fed to NN loss function by
     normalizing them from 0 to 1 and converting binary parameter
     charge to categorical
     """
@@ -89,10 +109,10 @@ class TrackParamsNormalizer:
         theta: np.float32,
         charge: np.int8,
     ) -> NormTParamsArr:
-        """Function that normalizes vertex (vx, vy, vz) + params (pt, phi, theta, charge)
+        """Normalizes vertex (vx, vy, vz) + params (pt, phi, theta, charge)
 
         Track params are generated in the following way:
-        ```
+        ```python
             track_params = TrackParams(
                 pt=np.random.uniform(100, 1000),  # MeV / c
                 phi=np.random.uniform(0, 2*np.pi),
@@ -121,13 +141,6 @@ class TrackParamsNormalizer:
         norm_params_vector: NormTParamsArr,
         is_charge_categorical: bool = True,
         is_numpy: bool = True,
-        # vx: np.float32,
-        # vy: np.float32,
-        # vz: np.float32,
-        # pt: np.float32,
-        # phi: np.float32,
-        # theta: np.float32,
-        # charge: np.int8
     ) -> TParamsArr:
         """Function that denormalizes normalized track parameters including vertex
         to return to the original values

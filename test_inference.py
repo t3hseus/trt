@@ -13,19 +13,18 @@ sys.path.append("../")
 from os.path import join as pjoin
 
 import torch
-
+from torch.nn import functional as F
 from src.data_generation import SPDEventGenerator, TrackParams, Vertex
-from src.models.model_with_segmentation import TRTWithSegmentation
-from src.normalization import ConstraintsNormalizer, TrackParamsNormalizer
+from src.models.stable import TRTHybrid
+from src.normalization import HitsNormalizer, TrackParamsNormalizer
 from src.visualization import display_side_by_side, draw_event
 
 MAX_EVENT_TRACKS = 5
 TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 1
-NUM_EVENTS_TRAIN = 1024
 NUM_EVENTS_VALID = 1024
 NUM_IMAGES = 10
-PATH = r"weights\best\trt_hybrid_val.pt"
+PATH = r"weights\stable\trt_hybrid_val.pt"
 
 seed_everything(13)
 
@@ -49,20 +48,22 @@ def inference(
         max_event_tracks=max_event_tracks,
     )
 
-    model = TRTWithSegmentation(
-        num_candidates=50, num_out_params=7, dropout=0.0, n_points=1024
+    model = TRTHybrid(
+        num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length
     )
-    model.load_state_dict(torch.load(weights_path, weights_only=True))
+    model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
     model.eval()
     vertex_dists = []
     accuracies = []
+    params_distances = {i: [] for i in ["pt", "phi", "theta", "charge"]}
     plot_events = np.random.randint(0, num_events, num_images)
     for i in tqdm(range(num_events)):
-        event, hits, labels, hits_norm, fakes_norm = generate_event(event_gen)
+        event, hits, labels, hits_norm, fakes_norm, track_params = generate_event(event_gen)
         inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
-        preds = model(inputs=inputs, mask=mask)
+        preds = model(inputs, mask=mask)
         track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
+        print("Selected tracks: ", ~track_mask.sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(
             event_gen, pred_tracks, pred_vertex
@@ -81,8 +82,10 @@ def inference(
         for label in np.unique(pred_labels):
             pred_tracks_list.append(torch.tensor(pred_hits[pred_labels == label]))
 
+        param_distance = get_params_dists(pred_tracks, track_params)
+        for i, v in param_distance.items():
+            params_distances[i].append(v)
         # track_distances = nearest_tracks_dist(target_tracks, pred_tracks_list)
-
         accuracies.append(
             (hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()).sum()
             / len(hit_labels)
@@ -100,7 +103,24 @@ def inference(
                 track_mask,
                 out_dir,
             )
-    plot_histograms(accuracies, vertex_dists, out_dir)
+    plot_histograms(accuracies, vertex_dists, params_distances, out_dir)
+
+
+def get_params_dists(pred_tracks, target_tracks):
+    pred_unnorm_params = convert_params_to_tensor(pred_tracks)
+    target_unnorm_params = convert_params_to_tensor(target_tracks)
+    diffs, row_ind, col_ind = get_params_diffs(
+        pred_unnorm_params, target_unnorm_params
+    )
+    #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
+    return diffs
+
+
+def convert_params_to_tensor(params: dict[int, TrackParams]):
+    torch_params = torch.zeros((len(params), 4), dtype=torch.float32)
+    for i, track in params.items():
+        torch_params[i, :] = track.torch
+    return torch_params
 
 
 def generate_event(event_gen):
@@ -108,9 +128,10 @@ def generate_event(event_gen):
     hits, labels = generate_event_from_params(
         event_gen, event.track_params, event.vertex
     )
-    hits_norm = ConstraintsNormalizer()(hits)
-    fakes_norm = ConstraintsNormalizer()(event.fakes)
-    return event, hits, labels, hits_norm, fakes_norm
+    hits_norm = HitsNormalizer()(hits)
+    fakes_norm = HitsNormalizer()(event.fakes)
+
+    return event, hits, labels, hits_norm, fakes_norm, event.track_params
 
 
 def convert_event_to_batch(hits_norm, fakes_norm):
@@ -120,6 +141,7 @@ def convert_event_to_batch(hits_norm, fakes_norm):
     batch_inputs = np.zeros((1, maxlen, n_features), dtype=np.float32)
     batch_hit_labels = np.zeros((1, maxlen), dtype=bool)
     batch_mask = np.ones((1, maxlen), dtype=bool)
+    batch_params = np.zeros((1, maxlen, n_features), dtype=np.float32)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     batch_inputs[0, : len(hits_norm)] = hits_norm
     batch_inputs[0, len(hits_norm) :] = fakes_norm  # add fakes!
@@ -256,7 +278,7 @@ def plot(
         side_by_side.write_html(pjoin(out_dir, str(i) + "_side_by_syde_filtered.html"))
 
 
-def plot_histograms(accuracies, vertex_dists, out_dir) -> None:
+def plot_histograms(accuracies, vertex_dists, param_distances, out_dir) -> None:
     sns.displot(np.array(accuracies), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Hit segmentation accuracy")
@@ -271,12 +293,42 @@ def plot_histograms(accuracies, vertex_dists, out_dir) -> None:
     print(
         f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
     )
+    for i, dist in param_distances.items():
+        sns.displot(np.array(dist), bins=82, kde=True)
+        plt.ylabel("Probability")
+        plt.xlabel("Per-param distance")
+        plt.title("Distances between predicted and real params (l1)")
+        plt.savefig(pjoin(out_dir, f"params_hist_{i}"))
+        print(f"Mean {i} param distance: {np.mean(dist)}")
+    print(
+        f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
+    )
 
 
 def match_targets(outputs, targets):
     cost_matrix = torch.cdist(outputs, targets, p=1)
     row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
+
+
+def get_params_diffs(
+        pred_vectors,
+        target_vectors,
+        param_names: list[str] = ["pt", "phi", "theta", "charge"],
+):
+    row_ind, col_ind = match_targets(
+                outputs=pred_vectors,
+                targets=target_vectors,
+            )
+    matched_outputs = pred_vectors[row_ind]
+    matched_targets = target_vectors[col_ind]
+    outputs = {}
+    for param_num in range(matched_targets.shape[-1]):
+        outputs[param_names[param_num]] = F.l1_loss(
+                matched_outputs[:, param_num],
+                matched_targets[:, param_num]
+            ).item()
+    return outputs, row_ind, col_ind
 
 
 def cardinality_error(pred_tracks, target_tracks):

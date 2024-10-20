@@ -6,8 +6,12 @@ import torch
 from torch.utils.data import Dataset
 
 from .data_generation import ArrayN, ArrayNx3, SPDEventGenerator
-from .normalization import (ConstraintsNormalizer, NormTParamsArr, TParamsArr,
-                            TrackParamsNormalizer)
+from .normalization import (
+    HitsNormalizer,
+    NormTParamsArr,
+    TParamsArr,
+    TrackParamsNormalizer,
+)
 
 
 class DatasetMode(IntEnum):
@@ -40,6 +44,7 @@ class BatchSampleWithLogits(BatchSample):
 class BatchSampleWithHitLabels(BatchSampleWithLogits):
     hit_labels: torch.LongTensor
 
+
 class SPDEventsDataset(Dataset):
     def __init__(
         self,
@@ -49,7 +54,7 @@ class SPDEventsDataset(Dataset):
         add_fakes: bool = True,
         shuffle: bool = True,
         detector_eff: float = 0.98,
-        hits_normalizer: Optional[ConstraintsNormalizer] = None,
+        hits_normalizer: Optional[HitsNormalizer] = None,
         track_params_normalizer: Optional[TrackParamsNormalizer] = None,
         truncation_length: Optional[int] = None,
         fakes_label: int = -1,
@@ -202,16 +207,14 @@ def collate_fn_with_class_loss(samples: List[DatasetSample]) -> BatchSample:
     )
 
 
-def collate_fn_with_segment_loss(samples: List[DatasetSample]) -> BatchSample:
+def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSample:
     max_n_hits = max([len(sample["hits"]) for sample in samples])
     n_tracks_per_sample = [len(sample["params"]) for sample in samples]
     max_n_tracks = max(n_tracks_per_sample)
     batch_size = len(samples)
     n_features = samples[0]["hits"].shape[-1]
 
-    batch_inputs = np.zeros(
-        (batch_size, max_n_hits, n_features), dtype=np.float32
-    )
+    batch_inputs = np.zeros((batch_size, max_n_hits, n_features), dtype=np.float32)
     batch_mask = np.zeros((batch_size, max_n_hits), dtype=bool)
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
@@ -221,14 +224,12 @@ def collate_fn_with_segment_loss(samples: List[DatasetSample]) -> BatchSample:
     batch_hit_labels = np.ones((batch_size, max_n_hits), dtype=np.int32)
 
     for i, sample in enumerate(samples):
-        batch_inputs[i, :len(sample["hits"])] = sample["hits"]
-        batch_hit_labels[i, :len(sample["hits"])] = sample["hit_labels"] > -1
-        batch_mask[i, :len(sample["hits"])] = sample["mask"]
-        batch_params[i, :len(sample["params"])] = sample["params"]
-        batch_labels[i, :len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
-        batch_orig_params[
-        i, :len(sample["orig_params"])
-        ] = sample["orig_params"]
+        batch_inputs[i, : len(sample["hits"])] = sample["hits"]
+        batch_hit_labels[i, : len(sample["hits"])] = sample["hit_labels"] > -1
+        batch_mask[i, : len(sample["hits"])] = sample["mask"]
+        batch_params[i, : len(sample["params"])] = sample["params"]
+        batch_labels[i, : len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
+        batch_orig_params[i, : len(sample["orig_params"])] = sample["orig_params"]
 
     return BatchSampleWithHitLabels(
         inputs=torch.tensor(batch_inputs, dtype=torch.float),
