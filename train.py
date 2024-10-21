@@ -22,16 +22,17 @@ MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
 TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 32
-NUM_EVENTS_TRAIN = 4096  # 50000
-NUM_EVENTS_VALID = 1024  # 10000
+NUM_EVENTS_TRAIN = 32  # 50000
+NUM_EVENTS_VALID = 32  # 10000
 EPOCHS_NUM = 25
 INTERMEDIATE = False
-
+FREEZE = True
+PRETRAINED_PATH = "weights/"
 
 def main():
     writer = SummaryWriter()
     out_dir = pjoin(
-        r"C:\Users\Girdyuk\Documents\projects\trt\weights",
+        r"weights",
         datetime.today().strftime("%Y-%m-%d"),
     )
 
@@ -58,6 +59,13 @@ def main():
         num_out_params=7,
         return_intermediate=INTERMEDIATE,
     ).to(device)
+    if PRETRAINED_PATH:
+        if not torch.cuda.is_available():
+            model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True, map_location=torch.device('cpu')))
+        else:
+            model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True))
+    if FREEZE:
+        model = freeze_model(model, model.params_head)
     criterion = TRTHungarianLoss(
         weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
     ).to(device)
@@ -151,6 +159,14 @@ def prepare_data(
     )
     return train_loader, val_loader
 
+
+def freeze_model(model, head_leave):
+    for child in model.children():
+        if child == head_leave:
+            continue
+        for param in child.parameters():
+            param.requires_grad = False
+    return model
 
 def calc_metrics(outputs, batch, device, hit_metrics: dict[str, Metric]):
     res_dict = {}

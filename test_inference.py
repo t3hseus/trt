@@ -51,11 +51,15 @@ def inference(
     model = TRTHybrid(
         num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length
     )
-    model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
+    if not torch.cuda.is_available():
+        model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
+    else:
+        model.load_state_dict(torch.load(weights_path, weights_only=True))
     model.eval()
     vertex_dists = []
     accuracies = []
     params_distances = {i: [] for i in ["pt", "phi", "theta", "charge"]}
+    tracks_distances = []
     plot_events = np.random.randint(0, num_events, num_images)
     for i in tqdm(range(num_events)):
         event, hits, labels, hits_norm, fakes_norm, track_params = generate_event(event_gen)
@@ -85,7 +89,10 @@ def inference(
         param_distance = get_params_dists(pred_tracks, track_params)
         for i, v in param_distance.items():
             params_distances[i].append(v)
-        # track_distances = nearest_tracks_dist(target_tracks, pred_tracks_list)
+
+        track_distance = get_tracks_dists(pred_tracks, track_params, pred_tracks_list, target_tracks)
+        tracks_distances.extend(track_distance)
+
         accuracies.append(
             (hit_labels == preds["hit_logits"].argmax(dim=-1).squeeze()).sum()
             / len(hit_labels)
@@ -103,7 +110,7 @@ def inference(
                 track_mask,
                 out_dir,
             )
-    plot_histograms(accuracies, vertex_dists, params_distances, out_dir)
+    plot_histograms(accuracies, vertex_dists, params_distances,track_distance, out_dir)
 
 
 def get_params_dists(pred_tracks, target_tracks):
@@ -114,6 +121,30 @@ def get_params_dists(pred_tracks, target_tracks):
     )
     #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
     return diffs
+
+
+def get_tracks_dists(pred_params, target_params, pred_tracks, target_tracks):
+    #pred_vectors = torch.stack(pred_tracks)
+    #target_vectors = torch.stack(target_tracks)
+    pred_unnorm_params = convert_params_to_tensor(pred_params)
+    target_unnorm_params = convert_params_to_tensor(target_params)
+    row_ind, col_ind = match_targets(
+        outputs=pred_unnorm_params,
+        targets=target_unnorm_params,
+    )
+    try:
+        matched_outputs = [pred_tracks[i] for i in row_ind]
+        matched_targets = [target_tracks[j] for j in col_ind]
+    except:
+        return []
+    outputs = []
+    for track_num in range(len(matched_targets)):
+        outputs.append(F.l1_loss(
+            matched_outputs[track_num],
+            matched_outputs[track_num]
+        ).item())
+    #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
+    return outputs
 
 
 def convert_params_to_tensor(params: dict[int, TrackParams]):
@@ -278,7 +309,7 @@ def plot(
         side_by_side.write_html(pjoin(out_dir, str(i) + "_side_by_syde_filtered.html"))
 
 
-def plot_histograms(accuracies, vertex_dists, param_distances, out_dir) -> None:
+def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, out_dir) -> None:
     sns.displot(np.array(accuracies), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Hit segmentation accuracy")
@@ -300,6 +331,12 @@ def plot_histograms(accuracies, vertex_dists, param_distances, out_dir) -> None:
         plt.title("Distances between predicted and real params (l1)")
         plt.savefig(pjoin(out_dir, f"params_hist_{i}"))
         print(f"Mean {i} param distance: {np.mean(dist)}")
+    sns.displot(np.array(track_distances), bins=82, kde=True)
+    plt.ylabel("Probability")
+    plt.xlabel("Per-param distance")
+    plt.title("Distances between predicted and real tracks (l1)")
+    plt.savefig(pjoin(out_dir, f"params_hist_{i}"))
+    print(f"Mean track distance: {np.mean(track_distances)}")
     print(
         f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
     )
