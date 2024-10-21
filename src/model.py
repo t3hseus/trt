@@ -3,41 +3,55 @@ from torch import Tensor, nn
 
 
 class PointTransformerEncoder(nn.Module):
-    def __init__(self, channels: int = 128) -> None:
+    def __init__(
+        self,
+        channels: int = 64,
+        num_heads: int = 4,
+    ) -> None:
         super().__init__()
 
-        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
+        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
+
+        self.sa1_mh = nn.MultiheadAttention(
+            channels, num_heads=num_heads, batch_first=True
+        )
         self.norm11 = nn.LayerNorm(channels)
         self.ff1 = nn.Sequential(
             nn.Linear(channels, channels * 2),
-            nn.ReLU(),
+            self.activation,
             nn.Linear(channels * 2, channels),
         )
         self.norm12 = nn.LayerNorm(channels)
 
-        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
+        self.sa2_mh = nn.MultiheadAttention(
+            channels, num_heads=num_heads, batch_first=True
+        )
         self.norm21 = nn.LayerNorm(channels)
         self.ff2 = nn.Sequential(
             nn.Linear(channels, channels * 2),
-            nn.ReLU(),
+            self.activation,
             nn.Linear(channels * 2, channels),
         )
         self.norm22 = nn.LayerNorm(channels)
 
-        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
+        self.sa3_mh = nn.MultiheadAttention(
+            channels, num_heads=num_heads, batch_first=True
+        )
         self.norm31 = nn.LayerNorm(channels)
         self.ff3 = nn.Sequential(
             nn.Linear(channels, channels * 2),
-            nn.ReLU(),
+            self.activation,
             nn.Linear(channels * 2, channels),
         )
         self.norm32 = nn.LayerNorm(channels)
 
-        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
+        self.sa4_mh = nn.MultiheadAttention(
+            channels, num_heads=num_heads, batch_first=True
+        )
         self.norm41 = nn.LayerNorm(channels)
         self.ff4 = nn.Sequential(
             nn.Linear(channels, channels * 2),
-            nn.ReLU(),
+            self.activation,
             nn.Linear(channels * 2, channels),
         )
         self.norm42 = nn.LayerNorm(channels)
@@ -47,11 +61,11 @@ class PointTransformerEncoder(nn.Module):
 
         x1, _ = self.sa1_mh(x, x, x, key_padding_mask=~mask)
         x1 = self.norm12(self.ff1(self.norm11(x + x1)))
-        x2, _ = self.sa1_mh(x1, x1, x1, key_padding_mask=~mask)
+        x2, _ = self.sa2_mh(x1, x1, x1, key_padding_mask=~mask)
         x2 = self.norm22(self.ff2(self.norm21(x1 + x2)))
-        x3, _ = self.sa2_mh(x2, x2, x2, key_padding_mask=~mask)
+        x3, _ = self.sa3_mh(x2, x2, x2, key_padding_mask=~mask)
         x3 = self.norm32(self.ff3(self.norm31(x2 + x3)))
-        x4, _ = self.sa3_mh(x3, x3, x3, key_padding_mask=~mask)
+        x4, _ = self.sa4_mh(x3, x3, x3, key_padding_mask=~mask)
         x4 = self.norm42(self.ff4(self.norm41(x3 + x4)))
 
         return x4
@@ -61,8 +75,8 @@ class TRTDetectDecoder(nn.Module):
     def __init__(
         self,
         num_layers: int = 4,
-        channels: int = 128,
-        dim_ff: int = 64,
+        channels: int = 64,
+        dim_ff: int = 128,
         num_heads: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
@@ -126,9 +140,9 @@ class TRTDetectDecoder(nn.Module):
 class TRTDetectDecoderLayer(nn.Module):
     def __init__(
         self,
-        channels: int = 128,
-        dim_ff: int = 64,
-        num_heads: int = 2,
+        channels: int = 64,
+        dim_ff: int = 32,
+        num_heads: int = 4,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -141,7 +155,6 @@ class TRTDetectDecoderLayer(nn.Module):
         )
 
         self.lin1 = nn.Linear(channels, dim_ff)
-        self.dropout = nn.Dropout(dropout)
         self.lin2 = nn.Linear(dim_ff, channels)
 
         self.norm1 = nn.LayerNorm(channels)
@@ -150,7 +163,7 @@ class TRTDetectDecoderLayer(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-        self.activation = nn.LeakyReLU(negative_slope=0.2)
+        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
 
     def forward(
         self,
@@ -180,62 +193,91 @@ class TRTDetectDecoderLayer(nn.Module):
 class TRTHybrid(nn.Module):
     def __init__(
         self,
+        channels: int = 64,
         num_points: int = 512,
-        input_channels: int = 3,
         num_candidates: int = 10,
-        num_heads: int = 2,
+        input_channels: int = 3,
+        num_heads: int = 4,
         num_classes: int = 1,
         num_out_params: int = 7,
+        num_detector_layers: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
+        zero_based_decoder: bool = True
     ) -> None:
         super().__init__()
 
-        channels = num_points // 4
+        # channels = num_points // 4
         self.num_points = num_points
         self.dim_model = channels
         self.num_heads = num_heads
         self.return_intermediate = return_intermediate
-        self.emb_encoder = nn.Sequential(
-            nn.Linear(input_channels, channels // 2),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, channels - 2),
+        self.num_candidates = num_candidates
+        self.zero_based_decoder = zero_based_decoder
+
+        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
+
+        self.pre_emb_encoder = nn.Sequential(
+            nn.Linear(input_channels, channels * 2),
+            self.activation,
+            nn.Linear(channels * 2, channels),
+        )
+        self.encoder = PointTransformerEncoder(
+            channels=channels, num_heads=self.num_heads
+        )
+        self.post_emb_encoder = nn.Sequential(
+            nn.Linear(channels + 2, channels),
+            self.activation,
+            nn.Linear(channels, channels),
         )
 
-        self.encoder = PointTransformerEncoder(channels=channels - 2)
         self.query_embed = nn.Embedding(
-            num_embeddings=num_candidates,
-            embedding_dim=channels,
+            num_embeddings=num_candidates, embedding_dim=channels
         )
         self.decoder = TRTDetectDecoder(
             channels=channels,
-            num_layers=4,
+            num_layers=num_detector_layers,
             dim_ff=channels * 2,
-            num_heads=2,
+            num_heads=self.num_heads,
             dropout=dropout,
             return_intermediate=return_intermediate,
         )
+
         self.segmentation_head = nn.Sequential(
-            nn.Linear(channels - 2, channels, bias=False),
-            nn.LeakyReLU(negative_slope=0.2),
             nn.Linear(channels, channels // 2),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, 2),
+            nn.LayerNorm(channels // 2),
+            self.activation,
+            nn.Linear(channels // 2, channels // 4),
+            nn.LayerNorm(channels // 4),
+            self.activation,
+            nn.Linear(channels // 4, 2),
         )
         self.class_head = nn.Sequential(
-            nn.Linear(channels, channels // 2, bias=False),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, num_classes + 1),
+            nn.Linear(channels, channels // 2),
+            nn.LayerNorm(channels // 2),
+            self.activation,
+            nn.Linear(channels // 2, channels // 4),
+            nn.LayerNorm(channels // 4),
+            self.activation,
+            nn.Linear(channels // 4, num_classes + 1),
         )
         self.params_head = nn.Sequential(
-            nn.Linear(channels, channels // 2, bias=False),
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, num_out_params - 3),
+            nn.Linear(channels, channels // 2),
+            nn.LayerNorm(channels // 2),
+            self.activation,
+            nn.Linear(channels // 2, channels // 4),
+            nn.LayerNorm(channels // 4),
+            self.activation,
+            nn.Linear(channels // 4, num_out_params - 3),
         )
         self.vertex_head = nn.Sequential(
             nn.Linear(channels, channels // 2),  # num of vertex elements
-            nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, 3),  # num of vertex elements
+            nn.LayerNorm(channels // 2),
+            self.activation,
+            nn.Linear(channels // 2, channels // 4),
+            nn.LayerNorm(channels // 4),
+            self.activation,
+            nn.Linear(channels // 4, 3),  # num of vertex elements
         )
 
     def forward(
@@ -251,23 +293,29 @@ class TRTHybrid(nn.Module):
         """
         batch_size = x.shape[0]
 
-        x = self.emb_encoder(x)
-
+        x = self.pre_emb_encoder(x)
         x_encoder = self.encoder(x, mask=mask)
         outputs_segmentation = self.segmentation_head(x_encoder)
 
         # add segmentation info to encoder
         x_encoder = torch.cat([x_encoder, outputs_segmentation], dim=-1)
-        seg_mask = torch.softmax(outputs_segmentation, dim=-1)[:, :,  1] # as soft mask (if use >, then the result may be 0 (no signal at all)
+        x_encoder = self.post_emb_encoder(x_encoder)
+
+        # as soft mask (if use >, then the result may be 0 (no signal at all)
+        seg_mask = torch.softmax(outputs_segmentation, dim=-1)[:, :, 1]
         denom = torch.sum(seg_mask, -1, keepdim=True) + 0.1
         global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
-        #global_feature = x_encoder.mean(dim=-2)
-        global_feature = global_feature.squeeze(-2)
+        # global_feature = x_encoder.mean(dim=-2)
+        if global_feature.shape[0] > 1:
+            global_feature = global_feature.squeeze(-2)  # If we have 1-el batch (for test and for simple train)
+        outputs_vertex = self.vertex_head(global_feature)
 
         # decoder transformer
         query_pos_embed = self.query_embed.weight.unsqueeze(0).repeat(batch_size, 1, 1)
-        x_decoder = torch.zeros_like(query_pos_embed)
-
+        if self.zero_based_decoder:
+            x_decoder = torch.zeros_like(query_pos_embed)
+        else:
+            x_decoder = global_feature.unsqueeze(1).repeat(1, self.num_candidates, 1)
         x = self.decoder(
             memory=x_encoder,
             query=x_decoder,
@@ -277,7 +325,6 @@ class TRTHybrid(nn.Module):
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
         outputs_coord = self.params_head(x)
 
-        outputs_vertex = self.vertex_head(global_feature)
         if return_params_with_vertex:
             # for evaluation (to hide concatenation to
             vertex = outputs_vertex.unsqueeze(-2).expand(

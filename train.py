@@ -1,10 +1,11 @@
 import os
 from datetime import datetime
 from os.path import join as pjoin
+from typing import Dict
 
 import torch
 from pytorch_lightning import seed_everything
-from torch import nn, optim
+from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics import Metric
@@ -12,9 +13,9 @@ from torchmetrics.classification import Accuracy, Precision, Recall
 from tqdm import tqdm
 
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
+from src.loss import TRTHungarianLoss
 from src.model import TRTHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
-from src.loss import TRTHungarianLoss, compute_vertex_distance
 
 seed_everything(13)
 
@@ -22,12 +23,13 @@ MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
 TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 32
-NUM_EVENTS_TRAIN = 32  # 50000
-NUM_EVENTS_VALID = 32  # 10000
-EPOCHS_NUM = 25
+NUM_EVENTS_TRAIN = 1  # 50000
+NUM_EVENTS_VALID = 1 # 10000
+EPOCHS_NUM = 2500
 INTERMEDIATE = False
 FREEZE = False
 PRETRAINED_PATH = None  # "weights/"
+
 
 def main():
     writer = SummaryWriter()
@@ -61,7 +63,11 @@ def main():
     ).to(device)
     if PRETRAINED_PATH:
         if not torch.cuda.is_available():
-            model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True, map_location=torch.device('cpu')))
+            model.load_state_dict(
+                torch.load(
+                    PRETRAINED_PATH, weights_only=True, map_location=torch.device("cpu")
+                )
+            )
         else:
             model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True))
     if FREEZE:
@@ -69,7 +75,7 @@ def main():
     criterion = TRTHungarianLoss(
         weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
     ).to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.00001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
     hits_metrics = {
         "accuracy": Accuracy(task="binary", threshold=0.5).to(device),
         "precision": Precision(task="binary", threshold=0.5).to(device),
@@ -121,13 +127,13 @@ def prepare_data(
     batch_size: int = BATCH_SIZE,
 ) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     train_data = SPDEventsDataset(
+        n_samples=num_events_train,
         max_event_tracks=max_event_tracks,
         generate_fixed_tracks_num=False,
+        truncation_length=truncation_length,
         hits_normalizer=hits_norm,
         track_params_normalizer=params_norm,
         shuffle=True,
-        truncation_length=truncation_length,
-        n_samples=num_events_train,
         mode=DatasetMode.train,
     )
     train_loader = DataLoader(
@@ -142,10 +148,11 @@ def prepare_data(
     val_data = SPDEventsDataset(
         n_samples=num_events_valid,
         max_event_tracks=max_event_tracks,
-        truncation_length=truncation_length,
         generate_fixed_tracks_num=False,
+        truncation_length=truncation_length,
         hits_normalizer=hits_norm,
         track_params_normalizer=params_norm,
+        shuffle=True,
         mode=DatasetMode.val,
     )
     val_loader = DataLoader(
@@ -168,37 +175,18 @@ def freeze_model(model, head_leave):
             param.requires_grad = False
     return model
 
-def calc_metrics(outputs, batch, device, hit_metrics: dict[str, Metric]):
+
+def calc_hits_metrics(
+    outputs: Tensor,
+    targets: Tensor,
+    hits_metrics: dict[str, Metric],
+) -> Dict[str, Tensor]:
     res_dict = {}
-    hits_classes = outputs["hit_logits"][:, :,  1].to(device)
-    for metric in hit_metrics:
-        res_dict[metric] = hit_metrics[metric](
-            hits_classes, batch["hit_labels"].to(device)
-        )
+    outputs = outputs[:, :, 1]
+    for metric in hits_metrics:
+        res_dict[metric] = hits_metrics[metric](outputs, targets).to(outputs.device)
 
-    params = outputs["params"][-1].to(device) if INTERMEDIATE else outputs["params"]
-    logits = outputs["logits"][-1].to(device) if INTERMEDIATE else outputs["logits"]
-    vertex = outputs["vertex"]
-
-    params_only_dist = TRTHungarianLoss(
-        weights=(1.0, 0.0, 0.0, 0.0), intermediate=False
-    ).to(device)
-    vertex_dist = compute_vertex_distance(vertex, batch["targets"].to(device))
-
-    last_out_params_dist = params_only_dist(
-        preds={"params": params, "logits": logits, "vertex": vertex},
-        targets={
-            "targets": batch["targets"].to(device),
-            "labels": batch["labels"].to(device),
-        },
-        preds_lengths=torch.LongTensor(
-            [NUM_CANDIDATES]
-            * params.shape[-3]
-            # if we have intermediate losses, shape is 4 dim, else 3 dim
-        ).to(device),
-        targets_lengths=batch["n_tracks_per_sample"].to(device),
-    )
-    return {"vertex_dist": vertex_dist, "params_dist": last_out_params_dist, **res_dict}
+    return res_dict
 
 
 def train_epoch(
@@ -206,7 +194,7 @@ def train_epoch(
     train_loader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     optimizer: optim.Optimizer,
-    writer,
+    writer: SummaryWriter,
     hits_metrics: dict[str, Metric],
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
@@ -219,7 +207,7 @@ def train_epoch(
         num_train_batches += 1
         optimizer.zero_grad(set_to_none=True)
         outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
-        loss = criterion(
+        loss, loss_components = criterion(
             preds=outputs,
             targets={
                 "targets": batch["targets"].to(device),
@@ -238,10 +226,16 @@ def train_epoch(
         loss.backward()
         optimizer.step()
 
-        batch_metrics = calc_metrics(outputs, batch, device, hits_metrics)
         writer.add_scalar(
             "train_loss_batch", loss, epoch * len(train_loader) + num_train_batches
         )
+
+        batch_metrics = calc_hits_metrics(
+            outputs=outputs["hit_logits"],
+            targets=batch["hit_labels"].to(device),
+            hits_metrics=hits_metrics,
+        )
+        batch_metrics.update(loss_components)
         for metric in batch_metrics:
             writer.add_scalar(
                 "train_" + metric,
@@ -258,8 +252,8 @@ def train_epoch(
     for metric in hits_metrics:
         writer.add_scalar(
             f"train_{metric}_epoch",
-            hits_metrics[metric].compute() / len(train_loader),
-            epoch
+            hits_metrics[metric].compute(),
+            epoch,
         )
 
     return train_loss, min_loss_train
@@ -269,12 +263,12 @@ def val_epoch(
     model: nn.Module,
     val_loader: torch.utils.data.DataLoader,
     criterion: nn.Module,
-    writer,
+    writer: SummaryWriter,
     hits_metrics: dict[str, Metric],
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
     min_loss_val: float = 1000000.0,
-    out_dir="",
+    out_dir: str = "",
 ) -> tuple[float, float]:
     val_loss = 0.0
     num_val_batches = 0
@@ -282,7 +276,7 @@ def val_epoch(
     for batch in val_loader:
         num_val_batches += 1
         outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
-        loss = criterion(
+        loss, loss_components = criterion(
             preds=outputs,
             targets={
                 "targets": batch["targets"].to(device),
@@ -298,10 +292,16 @@ def val_epoch(
         )
         val_loss += loss.detach().item()
 
-        batch_metrics = calc_metrics(outputs, batch, device, hits_metrics)
         writer.add_scalar(
             "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
         )
+
+        batch_metrics = calc_hits_metrics(
+            outputs=outputs["hit_logits"],
+            targets=batch["hit_labels"].to(device),
+            hits_metrics=hits_metrics,
+        )
+        batch_metrics.update(loss_components)
         for metric in batch_metrics:
             writer.add_scalar(
                 "val_" + metric,
@@ -317,9 +317,9 @@ def val_epoch(
     writer.add_scalar("val_loss_epoch", val_loss / len(val_loader), epoch)
     for metric in hits_metrics:
         writer.add_scalar(
-            f"train_{metric}_epoch",
-            hits_metrics[metric].compute() / len(val_loader),
-            epoch
+            f"val_{metric}_epoch",
+            hits_metrics[metric].compute(),
+            epoch,
         )
 
     return val_loss, min_loss_val

@@ -15,7 +15,7 @@ from os.path import join as pjoin
 import torch
 from torch.nn import functional as F
 from src.data_generation import SPDEventGenerator, TrackParams, Vertex
-from src.models.stable import TRTHybrid
+from src.model import TRTHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 from src.visualization import display_side_by_side, draw_event
 

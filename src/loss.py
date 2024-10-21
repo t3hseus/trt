@@ -1,4 +1,4 @@
-from typing import Callable, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -59,7 +59,7 @@ def compute_vertex_distance(
     weights: tuple[float] = (0.1, 0.1, 0.8),
 ) -> torch.Tensor:
     outputs = outputs.squeeze()
-    vertex_target = targets[:, 0, :3]
+    vertex_target = targets[:, 0, :3].squeeze()
     weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False)
     return torch.nn.functional.l1_loss(outputs * weights_, vertex_target * weights_)
 
@@ -137,7 +137,7 @@ class TRTHungarianLoss(nn.Module):
         targets: dict[str, Tensor],
         preds_lengths: Tensor,
         targets_lengths: Tensor,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, Dict[str, Tensor]]:
         batch_size = preds["params"].shape[0]
         pred_logits = preds["logits"]
         target_labels = targets["labels"]
@@ -193,12 +193,20 @@ class TRTHungarianLoss(nn.Module):
             preds["vertex"].unsqueeze(1), targets["targets"]
         )
 
-        return (
+        total_loss = (
             self._weights[0] * hungarian_loss
             + self._weights[1] * label_loss
             + self._weights[2] * vertex_loss
             + self._weights[3] * segmentation_loss
         )
+        loss_components = {
+            "params_dist": hungarian_loss.cpu().detach().item(),
+            "matching_loss": label_loss.cpu().detach().item(),
+            "vertex_dist": vertex_loss.cpu().detach().item(),
+            "segmentation_loss": segmentation_loss.cpu().detach().item(),
+        }
+
+        return total_loss, loss_components
 
 
 if __name__ == "__main__":
