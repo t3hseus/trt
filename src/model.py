@@ -6,7 +6,7 @@ class PointTransformerEncoder(nn.Module):
     def __init__(self, channels: int = 128) -> None:
         super().__init__()
 
-        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa1_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
         self.norm11 = nn.LayerNorm(channels)
         self.ff1 = nn.Sequential(
             nn.Linear(channels, channels * 2),
@@ -15,7 +15,7 @@ class PointTransformerEncoder(nn.Module):
         )
         self.norm12 = nn.LayerNorm(channels)
 
-        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa2_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
         self.norm21 = nn.LayerNorm(channels)
         self.ff2 = nn.Sequential(
             nn.Linear(channels, channels * 2),
@@ -24,7 +24,7 @@ class PointTransformerEncoder(nn.Module):
         )
         self.norm22 = nn.LayerNorm(channels)
 
-        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa3_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
         self.norm31 = nn.LayerNorm(channels)
         self.ff3 = nn.Sequential(
             nn.Linear(channels, channels * 2),
@@ -33,7 +33,7 @@ class PointTransformerEncoder(nn.Module):
         )
         self.norm32 = nn.LayerNorm(channels)
 
-        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=1, batch_first=True)
+        self.sa4_mh = nn.MultiheadAttention(channels, num_heads=2, batch_first=True)
         self.norm41 = nn.LayerNorm(channels)
         self.ff4 = nn.Sequential(
             nn.Linear(channels, channels * 2),
@@ -209,7 +209,7 @@ class TRTHybrid(nn.Module):
         )
         self.decoder = TRTDetectDecoder(
             channels=channels,
-            num_layers=6,
+            num_layers=4,
             dim_ff=channels * 2,
             num_heads=2,
             dropout=dropout,
@@ -258,7 +258,10 @@ class TRTHybrid(nn.Module):
 
         # add segmentation info to encoder
         x_encoder = torch.cat([x_encoder, outputs_segmentation], dim=-1)
-        global_feature = x_encoder.mean(dim=-2)
+        seg_mask = torch.softmax(outputs_segmentation, dim=-1)[:, :,  1] # as soft mask (if use >, then the result may be 0 (no signal at all)
+        denom = torch.sum(seg_mask, -1, keepdim=True) + 0.1
+        global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
+        #global_feature = x_encoder.mean(dim=-2)
         global_feature = global_feature.squeeze(-2)
 
         # decoder transformer

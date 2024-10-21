@@ -26,8 +26,8 @@ NUM_EVENTS_TRAIN = 32  # 50000
 NUM_EVENTS_VALID = 32  # 10000
 EPOCHS_NUM = 25
 INTERMEDIATE = False
-FREEZE = True
-PRETRAINED_PATH = "weights/"
+FREEZE = False
+PRETRAINED_PATH = None  # "weights/"
 
 def main():
     writer = SummaryWriter()
