@@ -128,7 +128,7 @@ class TrackParamsNormalizer:
             (vz, *self._vz_range),
             (pt, *self._pt_range),
             (phi, *self._phi_range),
-            (theta, 0, np.pi),
+            (theta, *self._theta_range),
         ):
             params_list.append(self.minmax_norm(data, low, up))
 
@@ -153,7 +153,7 @@ class TrackParamsNormalizer:
             (norm_params_vector[2], *self._vz_range),
             (norm_params_vector[3], *self._pt_range),
             (norm_params_vector[4], *self._phi_range),
-            (norm_params_vector[5], 0, np.pi),
+            (norm_params_vector[5], *self._theta_range),
         ):
             denorm_params_list.append(self.minmax_denorm(data, low, up))
 
