@@ -49,12 +49,12 @@ class PointTransformerEncoder(nn.Module):
         x1 = self.norm12(self.ff1(self.norm11(x + x1)))
         x2, _ = self.sa1_mh(x1, x1, x1, key_padding_mask=~mask)
         x2 = self.norm22(self.ff2(self.norm21(x1 + x2)))
-        x3, _ = self.sa2_mh(x2, x2, x2, key_padding_mask=~mask)
-        x3 = self.norm32(self.ff3(self.norm31(x2 + x3)))
-        x4, _ = self.sa3_mh(x3, x3, x3, key_padding_mask=~mask)
-        x4 = self.norm42(self.ff4(self.norm41(x3 + x4)))
+        #x3, _ = self.sa2_mh(x2, x2, x2, key_padding_mask=~mask)
+        #x3 = self.norm32(self.ff3(self.norm31(x2 + x3)))
+        #x4, _ = self.sa3_mh(x3, x3, x3, key_padding_mask=~mask)
+        #x4 = self.norm42(self.ff4(self.norm41(x3 + x4)))
 
-        return x4
+        return x2
 
 
 class TRTDetectDecoder(nn.Module):
@@ -230,7 +230,7 @@ class TRTHybrid(nn.Module):
         self.params_head = nn.Sequential(
             nn.Linear(channels, channels // 2, bias=False),
             nn.LeakyReLU(negative_slope=0.2),
-            nn.Linear(channels // 2, num_out_params - 3 + 1),
+            nn.Linear(channels // 2, num_out_params - 3),
         )
         self.vertex_head = nn.Sequential(
             nn.Linear(channels, channels // 2),  # num of vertex elements
@@ -272,24 +272,24 @@ class TRTHybrid(nn.Module):
         )
 
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
-        outputs_params_ = self.params_head(x)
+        outputs_params = self.params_head(x)
 
         # params adaptation
-        outputs_params = torch.zeros(
-            (*outputs_params_.shape[:-1], outputs_params_.shape[-1] - 1),
-            dtype=outputs_params_.dtype,
-            device=outputs_params_.device,
-        )
-        outputs_params[..., 0] = outputs_params_[..., 0]
-        phi_sin = torch.sin(outputs_params_[..., 1])
-        phi_cos = torch.cos(outputs_params_[..., 2])
+        # outputs_params = torch.zeros(
+        #    (*outputs_params_.shape[:-1], outputs_params_.shape[-1] - 1),
+        #    dtype=outputs_params_.dtype,
+        #    device=outputs_params_.device,
+        #)
+        #outputs_params[..., 0] = outputs_params_[..., 0]
+        #phi_sin = torch.sin(outputs_params_[..., 1])
+        phi = torch.acos(torch.tanh(outputs_params[..., 1]))
         outputs_params[..., 1] = (
             # atan2 is in range [-pi; pi], but we expect phi to be from 0 to 2pi and
             # normalize it to lie in range [0; 1]
-            (torch.atan2(phi_sin, phi_cos) + torch.pi) / 2 / torch.pi
+            (phi + torch.pi) / 2 / torch.pi
         )
-        outputs_params[..., 2] = outputs_params_[..., 3]  # theta
-        outputs_params[..., 3] = outputs_params_[..., 4]  # charge
+        #outputs_params[..., 2] = outputs_params_[..., 3]  # theta
+        #outputs_params[..., 3] = outputs_params_[..., 4]  # charge
 
         outputs_vertex = self.vertex_head(global_feature)
 
