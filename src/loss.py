@@ -2,6 +2,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 import torch
 from scipy.optimize import linear_sum_assignment
+from sklearn.metrics import confusion_matrix
 from torch import Tensor, nn
 from torch.nn import functional as F
 

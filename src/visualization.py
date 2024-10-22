@@ -34,7 +34,7 @@ def draw_event(
                 y=track_hits[:, 1],
                 z=track_hits[:, 2],
                 marker=dict(
-                    size=1,
+                    size=2,
                     color=colors[i],
                 ),
                 mode="markers",
@@ -50,7 +50,7 @@ def draw_event(
                 y=[vertex[1]],
                 z=[vertex[2]],
                 marker=dict(
-                    size=2,
+                    size=3,
                     color="red",
                 ),
                 mode="markers",
@@ -66,10 +66,10 @@ def draw_event(
                 y=fakes[:, 1],
                 z=fakes[:, 2],
                 marker=dict(
-                    size=1,
+                    size=2,
                     color="gray",
                 ),
-                opacity=0.35,
+                opacity=0.45,
                 mode="markers",
                 name="Fakes",
             )

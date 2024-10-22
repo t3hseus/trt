@@ -210,6 +210,7 @@ def train_epoch(
 ) -> tuple[float, float]:
     train_loss = 0.0
     num_train_batches = 0
+    model.train()
     for batch in train_loader:
         num_train_batches += 1
         optimizer.zero_grad(set_to_none=True)
@@ -279,31 +280,32 @@ def val_epoch(
     num_val_batches = 0
     model.eval()
     for batch in val_loader:
-        num_val_batches += 1
-        outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
-        loss, loss_components = criterion(
-            preds=outputs,
-            targets={
-                "targets": batch["targets"].to(device),
-                "labels": batch["labels"].to(device),
-                "hit_labels": batch["hit_labels"].to(device),
-            },
-            preds_lengths=torch.LongTensor(
-                [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
-            ).to(device),
-            targets_lengths=batch["n_tracks_per_sample"].to(device),
-        )
-        val_loss += loss.detach().item()
+        with torch.no_grad():
+            num_val_batches += 1
+            outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
+            loss, loss_components = criterion(
+                preds=outputs,
+                targets={
+                    "targets": batch["targets"].to(device),
+                    "labels": batch["labels"].to(device),
+                    "hit_labels": batch["hit_labels"].to(device),
+                },
+                preds_lengths=torch.LongTensor(
+                    [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
+                ).to(device),
+                targets_lengths=batch["n_tracks_per_sample"].to(device),
+            )
+            val_loss += loss.detach().item()
 
-        writer.add_scalar(
-            "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
-        )
+            writer.add_scalar(
+                "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
+            )
 
-        batch_metrics = calc_hits_metrics(
-            outputs=outputs["hit_logits"],
-            targets=batch["hit_labels"].to(device),
-            hits_metrics=hits_metrics,
-        )
+            batch_metrics = calc_hits_metrics(
+                outputs=outputs["hit_logits"],
+                targets=batch["hit_labels"].to(device),
+                hits_metrics=hits_metrics,
+            )
         batch_metrics.update(loss_components)
         for metric in batch_metrics:
             writer.add_scalar(

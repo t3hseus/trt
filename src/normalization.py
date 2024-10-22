@@ -10,7 +10,7 @@ from src.data_generation import TrackParams, Vertex
 
 DType = TypeVar("DType", bound=np.generic)
 NormTParamsArr = Annotated[npt.NDArray[DType], Literal[8]]
-TParamsArr = Annotated[npt.NDArray[DType], Literal[7]]
+TParamsArr = Annotated[npt.NDArray[DType], Literal[4]]
 ArrayNx3 = Annotated[npt.NDArray[DType], Literal["N", 3]]
 
 

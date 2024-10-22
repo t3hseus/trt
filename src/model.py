@@ -1,6 +1,7 @@
 from typing import Dict
 
 import torch
+from sklearn.cluster import AgglomerativeClustering
 from torch import Tensor, nn
 
 
@@ -346,16 +347,21 @@ class TRTHybrid(nn.Module):
         }
 
 
+import numpy as np
+
+
 class TRTBaseline(nn.Module):
     def __init__(
         self,
         channels: int = 64,
         input_channels: int = 3,
         num_heads: int = 4,
+        num_candidates: int = 5
     ) -> None:
         super().__init__()
 
         self.num_heads = num_heads
+        self.num_candidates = num_candidates
 
         self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
 
@@ -375,13 +381,41 @@ class TRTBaseline(nn.Module):
         )
 
     def forward(self, x, mask=None) -> Dict[str, Tensor]:
-        x = self.pre_emb_encoder(x)
-        x_encoder = self.encoder(x, mask=mask)
+        x_encoder = self.pre_emb_encoder(x)
+        x_encoder = self.encoder(x_encoder, mask=mask)
         outputs_segmentation = self.segmentation_head(x_encoder)
 
+        if self.training:
+            return {
+                "hit_logits": outputs_segmentation,
+            }
+
         mask = (outputs_segmentation.sigmoid() > 0.5).squeeze(-1)
-        x_encoder = x_encoder[mask]
+        outputs_vertex = torch.tensor(
+            [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
+        )
+        batch_size = x.shape[0]
+        params = []
+        for i in range(batch_size):
+            x_hits = x[i, mask[i]]
+            if x_hits.shape[0] < 30:
+                params.append(torch.zeros(4, dtype=torch.float, device=x_hits.device))
+                continue
+
+            clust = AgglomerativeClustering(
+                n_clusters=int(np.round(x_hits.shape[0] / 32))
+            )
+            clust.fit(x_hits.cpu().detach().numpy())
+            params.append([])
+
+            print("found hits", x_hits.shape)
+            print("clustering")
+            print(clust.labels_)
+
+        output_params = torch.zeros((len(params), 4))
 
         return {
+            "params": output_params,
+            "vertex": outputs_vertex,
             "hit_logits": outputs_segmentation,
         }
