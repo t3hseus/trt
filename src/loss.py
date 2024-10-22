@@ -69,7 +69,7 @@ class TRTHungarianLoss(nn.Module):
         self,
         params_distance: Callable = params_distance,
         class_loss: Callable = F.cross_entropy,
-        segmentation_loss: Callable = F.cross_entropy,
+        segmentation_loss: Callable = F.binary_cross_entropy_with_logits,
         weights: tuple[float, ...] = (1, 1, 1, 1),
         intermediate: bool = False,
         params_with_vertex: bool = False,
@@ -126,7 +126,8 @@ class TRTHungarianLoss(nn.Module):
                 and target_segmentation_labels is not None
             ):
                 segmentation_loss += self._segmentation_loss_func(
-                    preds_segmentation_logits[i], target_segmentation_labels[i]
+                    preds_segmentation_logits[i].squeeze(-1),
+                    target_segmentation_labels[i]
                 )
 
         return hungarian_loss, label_loss, segmentation_loss
@@ -207,6 +208,33 @@ class TRTHungarianLoss(nn.Module):
         }
 
         return total_loss, loss_components
+
+
+class BaselineLoss(nn.Module):
+    def __init__(
+        self, segmentation_loss: Callable = F.binary_cross_entropy_with_logits
+    ) -> None:
+        super().__init__()
+
+        self._segmentation_loss_func = segmentation_loss
+
+    def forward(
+        self,
+        preds: Dict[str, Tensor],
+        targets: Dict[str, Tensor],
+        **_,
+    ) -> Tuple[Tensor, Dict[str, Tensor]]:
+        batch_size = preds["hit_logits"].shape[0]
+        device = preds["hit_logits"].device
+        segmentation_loss = torch.tensor(0.0).to(device)
+        for i in range(batch_size):
+            segmentation_loss += self._segmentation_loss_func(
+                preds["hit_logits"][i].squeeze(-1), targets["hit_labels"][i]
+            )
+
+        segmentation_loss /= batch_size
+
+        return segmentation_loss, {}
 
 
 if __name__ == "__main__":

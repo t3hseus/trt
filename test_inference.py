@@ -24,7 +24,7 @@ TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 1
 NUM_EVENTS_VALID = 1024
 NUM_IMAGES = 10
-PATH = r"weights\with_global\trt_hybrid_val.pt"
+PATH = r"weights\server\trt_hybrid_val.pt"
 
 seed_everything(13)
 
@@ -66,7 +66,7 @@ def inference(
         inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
         preds = model(inputs, mask=mask)
-        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
+        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.8
         print("Selected tracks: ", (~track_mask).sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(
@@ -110,7 +110,7 @@ def inference(
                 track_mask,
                 out_dir,
             )
-    plot_histograms(accuracies, vertex_dists, params_distances,track_distance, out_dir)
+    plot_histograms(accuracies, vertex_dists, params_distances, track_distance, out_dir)
 
 
 def get_params_dists(pred_tracks, target_tracks):
@@ -139,11 +139,12 @@ def get_tracks_dists(pred_params, target_params, pred_tracks, target_tracks):
         return []
     outputs = []
     for track_num in range(len(matched_targets)):
+        min_len = min(len(matched_outputs[track_num]),len(matched_targets[track_num]) )
         outputs.append(F.l1_loss(
-            matched_outputs[track_num],
-            matched_outputs[track_num]
+            matched_outputs[track_num][:min_len],
+            matched_targets[track_num][:min_len]
         ).item())
-    #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
+    print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
     return outputs
 
 
@@ -321,9 +322,6 @@ def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, 
     plt.xlabel("Vertex distance")
     plt.title("Distances between predicted and real vertices")
     plt.savefig(pjoin(out_dir, "vertex_hist"),  bbox_inches='tight')
-    print(
-        f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
-    )
     for i, dist in param_distances.items():
         sns.displot(np.array(dist), bins=82, kde=True)
         plt.ylabel("Probability")
@@ -331,6 +329,7 @@ def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, 
         plt.title(f"Distance between predicted and real {i} (l1)")
         plt.savefig(pjoin(out_dir, f"params_hist_{i}"),  bbox_inches='tight')
         print(f"Mean {i} param distance: {np.mean(dist)}")
+        print(f"Median {i} param distance: {np.median(dist)}")
     sns.displot(np.array(track_distances), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Per-param distance")
@@ -339,6 +338,9 @@ def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, 
     print(f"Mean track distance: {np.mean(track_distances)}")
     print(
         f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
+    )
+    print(
+        f"Hit accuracy: {np.mean(accuracies)}, median vertex distance {np.median(vertex_dists)}"
     )
 
 
