@@ -282,6 +282,7 @@ class TRTHybrid(nn.Module):
             self.activation,
             nn.Linear(channels // 4, 3),  # num of vertex elements
         )
+        self.queries_init_layer = nn.Linear(1, self.num_candidates)
 
     def forward(
         self, x, mask=None, return_params_with_vertex: bool = False
@@ -306,8 +307,9 @@ class TRTHybrid(nn.Module):
 
         # as soft mask (if use >, then the result may be 0 (no signal at all)
         seg_mask = outputs_segmentation.sigmoid()
-        denom = torch.sum(seg_mask) + 0.1
+        denom = torch.sum(seg_mask, 1, keepdim=True) + 0.1
         global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
+
         # global_feature = x_encoder.mean(dim=-2)
         if global_feature.shape[0] > 1:
             # If we have 1-el batch (for test and for simple train)
@@ -319,7 +321,8 @@ class TRTHybrid(nn.Module):
         if self.zero_based_decoder:
             x_decoder = torch.zeros_like(query_pos_embed)
         else:
-            x_decoder = global_feature.unsqueeze(1).repeat(1, self.num_candidates, 1)
+            x_decoder = self.queries_init_layer(global_feature.permute(0,2,1)).permute(0,2,1)
+            #x_decoder = global_feature.repeat(1, self.num_candidates, 1)
         x = self.decoder(
             memory=x_encoder,
             query=x_decoder,
