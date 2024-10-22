@@ -307,7 +307,7 @@ class TRTHybrid(nn.Module):
 
         # as soft mask (if use >, then the result may be 0 (no signal at all)
         seg_mask = outputs_segmentation.sigmoid()
-        denom = torch.sum(seg_mask, 1, keepdim=True) + 0.1
+        denom = torch.sum(seg_mask, 1) + 0.1
         global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
 
         # global_feature = x_encoder.mean(dim=-2)
@@ -321,7 +321,7 @@ class TRTHybrid(nn.Module):
         if self.zero_based_decoder:
             x_decoder = torch.zeros_like(query_pos_embed)
         else:
-            x_decoder = self.queries_init_layer(global_feature.permute(0,2,1)).permute(0,2,1)
+            x_decoder = self.queries_init_layer(global_feature.unsqueeze(-1)).permute(0,2,1)
             #x_decoder = global_feature.repeat(1, self.num_candidates, 1)
         x = self.decoder(
             memory=x_encoder,
