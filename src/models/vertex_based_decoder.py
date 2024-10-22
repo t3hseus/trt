@@ -1,7 +1,7 @@
-from typing import Dict
-
+"""
+This is the best model on 22.10 (morning)
+"""
 import torch
-from sklearn.cluster import AgglomerativeClustering, DBSCAN
 from torch import Tensor, nn
 
 
@@ -206,7 +206,7 @@ class TRTHybrid(nn.Module):
         num_detector_layers: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
-        zero_based_decoder: bool = False,
+        zero_based_decoder: bool = True
     ) -> None:
         super().__init__()
 
@@ -229,7 +229,7 @@ class TRTHybrid(nn.Module):
             channels=channels, num_heads=self.num_heads
         )
         self.post_emb_encoder = nn.Sequential(
-            nn.Linear(channels + 1, channels),
+            nn.Linear(channels + 2, channels),
             self.activation,
             nn.Linear(channels, channels),
         )
@@ -253,7 +253,7 @@ class TRTHybrid(nn.Module):
             nn.Linear(channels // 2, channels // 4),
             nn.LayerNorm(channels // 4),
             self.activation,
-            nn.Linear(channels // 4, 1),
+            nn.Linear(channels // 4, 2),
         )
         self.class_head = nn.Sequential(
             nn.Linear(channels, channels // 2),
@@ -305,13 +305,12 @@ class TRTHybrid(nn.Module):
         x_encoder = self.post_emb_encoder(x_encoder)
 
         # as soft mask (if use >, then the result may be 0 (no signal at all)
-        seg_mask = outputs_segmentation.sigmoid()
-        denom = torch.sum(seg_mask) + 0.1
+        seg_mask = torch.softmax(outputs_segmentation, dim=-1)[:, :, 1]
+        denom = torch.sum(seg_mask, -1, keepdim=True) + 0.1
         global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
         # global_feature = x_encoder.mean(dim=-2)
         if global_feature.shape[0] > 1:
-            # If we have 1-el batch (for test and for simple train)
-            global_feature = global_feature.squeeze(-2)
+            global_feature = global_feature.squeeze(-2)  # If we have 1-el batch (for test and for simple train)
         outputs_vertex = self.vertex_head(global_feature)
 
         # decoder transformer
@@ -344,86 +343,4 @@ class TRTHybrid(nn.Module):
             "params": outputs_coord,
             "vertex": outputs_vertex,
             "hit_logits": outputs_segmentation,
-        }
-
-
-import numpy as np
-
-
-class TRTBaseline(nn.Module):
-    def __init__(
-        self,
-        channels: int = 64,
-        input_channels: int = 3,
-        num_heads: int = 4,
-        num_candidates: int = 5
-    ) -> None:
-        super().__init__()
-
-        self.num_heads = num_heads
-        self.num_candidates = num_candidates
-
-        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
-
-        self.pre_emb_encoder = nn.Linear(input_channels, channels)
-
-        self.encoder = PointTransformerEncoder(
-            channels=channels, num_heads=self.num_heads
-        )
-        self.segmentation_head = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.LayerNorm(channels // 2),
-            self.activation,
-            nn.Linear(channels // 2, channels // 4),
-            nn.LayerNorm(channels // 4),
-            self.activation,
-            nn.Linear(channels // 4, 1),
-        )
-
-    def forward(self, x, mask=None) -> Dict[str, Tensor]:
-        x_encoder = self.pre_emb_encoder(x)
-        x_encoder = self.encoder(x_encoder, mask=mask)
-        outputs_segmentation = self.segmentation_head(x_encoder)
-
-        if self.training:
-            return {
-                "hit_logits": outputs_segmentation,
-            }
-
-        mask = (outputs_segmentation.sigmoid() > 0.5).squeeze(-1)
-        outputs_vertex = torch.tensor(
-            [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
-        )
-        batch_size = x.shape[0]
-        params = []
-        output_labels = []
-        for i in range(batch_size):
-            x_hits = x[i, mask[i]]
-            if x_hits.shape[0] < 30:
-                params.append(torch.zeros(4, dtype=torch.float, device=x_hits.device))
-
-                output_labels.append(np.ones(mask[i].sum()))
-                continue
-
-            # clust = AgglomerativeClustering(
-                #n_clusters=int(np.round(x_hits.shape[0] / 32))
-            #)
-            clust = DBSCAN(eps=0.1, min_samples=4)
-            clust.fit(x_hits.cpu().detach().numpy())
-            params.append([])
-
-            print("found hits", x_hits.shape)
-            print("clustering")
-            print(clust.labels_)
-
-            labels = clust.labels_
-            output_labels.append(labels)
-
-        output_params = torch.zeros((len(params), 4))
-
-        return {
-            "params": output_params,
-            "vertex": outputs_vertex,
-            "hit_logits": outputs_segmentation,
-            "clusters": torch.tensor(output_labels)
         }
