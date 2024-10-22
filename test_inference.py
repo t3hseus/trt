@@ -24,7 +24,7 @@ TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 1
 NUM_EVENTS_VALID = 1024
 NUM_IMAGES = 10
-PATH = r"weights\stable\trt_hybrid_val.pt"
+PATH = r"weights\with_global\trt_hybrid_val.pt"
 
 seed_everything(13)
 
@@ -49,7 +49,7 @@ def inference(
     )
 
     model = TRTHybrid(
-        num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length
+        num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length, zero_based_decoder=False
     )
     if not torch.cuda.is_available():
         model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
@@ -61,13 +61,13 @@ def inference(
     params_distances = {i: [] for i in ["pt", "phi", "theta", "charge"]}
     tracks_distances = []
     plot_events = np.random.randint(0, num_events, num_images)
-    for i in tqdm(range(num_events)):
+    for ev in tqdm(range(num_events)):
         event, hits, labels, hits_norm, fakes_norm, track_params = generate_event(event_gen)
         inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
         preds = model(inputs, mask=mask)
         track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
-        print("Selected tracks: ", ~track_mask.sum())
+        print("Selected tracks: ", (~track_mask).sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(
             event_gen, pred_tracks, pred_vertex
@@ -98,9 +98,9 @@ def inference(
             / len(hit_labels)
         )
 
-        if i in plot_events:
+        if ev in plot_events:
             plot(
-                i,
+                ev,
                 event_gen,
                 event,
                 pred_hits,
@@ -314,13 +314,13 @@ def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, 
     plt.ylabel("Probability")
     plt.xlabel("Hit segmentation accuracy")
     plt.title("Hit segmentation accuracy histogram")
-    plt.savefig(pjoin(out_dir, "accuracy_hist"))
+    plt.savefig(pjoin(out_dir, "accuracy_hist"),  bbox_inches='tight')
 
     sns.displot(np.array(vertex_dists), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Vertex distance")
     plt.title("Distances between predicted and real vertices")
-    plt.savefig(pjoin(out_dir, "vertex_hist"))
+    plt.savefig(pjoin(out_dir, "vertex_hist"),  bbox_inches='tight')
     print(
         f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
     )
@@ -328,14 +328,14 @@ def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, 
         sns.displot(np.array(dist), bins=82, kde=True)
         plt.ylabel("Probability")
         plt.xlabel("Per-param distance")
-        plt.title("Distances between predicted and real params (l1)")
-        plt.savefig(pjoin(out_dir, f"params_hist_{i}"))
+        plt.title(f"Distance between predicted and real {i} (l1)")
+        plt.savefig(pjoin(out_dir, f"params_hist_{i}"),  bbox_inches='tight')
         print(f"Mean {i} param distance: {np.mean(dist)}")
     sns.displot(np.array(track_distances), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Per-param distance")
     plt.title("Distances between predicted and real tracks (l1)")
-    plt.savefig(pjoin(out_dir, f"params_hist_{i}"))
+    plt.savefig(pjoin(out_dir, f"params_hist_{i}"), bbox_inches='tight')
     print(f"Mean track distance: {np.mean(track_distances)}")
     print(
         f"Hit accuracy: {np.mean(accuracies)}, mean vertex distance {np.mean(vertex_dists)}"
