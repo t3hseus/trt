@@ -13,8 +13,8 @@ from torchmetrics.classification import Accuracy, Precision, Recall
 from tqdm import tqdm
 
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
-from src.loss import TRTHungarianLoss
-from src.model import TRTHybrid
+from src.loss import TRTHungarianLoss, BaselineLoss
+from src.model import TRTHybrid, TRTBaseline
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 
 seed_everything(13)
@@ -22,14 +22,14 @@ seed_everything(13)
 MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
 TRUNCATION_LENGTH = 1024
-BATCH_SIZE = 32
+BATCH_SIZE = 1
 NUM_EVENTS_TRAIN = 1  # 50000
-NUM_EVENTS_VALID = 1 # 10000
-EPOCHS_NUM = 2500
+NUM_EVENTS_VALID = 1  # 10000
+EPOCHS_NUM = 3000
 INTERMEDIATE = False
 FREEZE = False
-PRETRAINED_PATH = None  # "weights/"
-
+PRETRAINED_PATH = None  # "weights/trt_hybrid_val.pt"
+BASELINE = True
 
 def main():
     writer = SummaryWriter()
@@ -55,12 +55,16 @@ def main():
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     print("Device is", device)
-    model = TRTHybrid(
-        num_candidates=NUM_CANDIDATES,
-        num_points=TRUNCATION_LENGTH,
-        num_out_params=7,
-        return_intermediate=INTERMEDIATE,
-    ).to(device)
+    if not BASELINE:
+        model = TRTHybrid(
+            num_candidates=NUM_CANDIDATES,
+            num_points=TRUNCATION_LENGTH,
+            num_out_params=7,
+            return_intermediate=INTERMEDIATE,
+            zero_based_decoder=False
+        ).to(device)
+    else:
+        model = TRTBaseline().to(device)
     if PRETRAINED_PATH:
         if not torch.cuda.is_available():
             model.load_state_dict(
@@ -72,9 +76,12 @@ def main():
             model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True))
     if FREEZE:
         model = freeze_model(model, model.params_head)
-    criterion = TRTHungarianLoss(
-        weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
-    ).to(device)
+    if not BASELINE:
+        criterion = TRTHungarianLoss(
+            weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
+        ).to(device)
+    else:
+        criterion = BaselineLoss().to(device)
     optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
     hits_metrics = {
         "accuracy": Accuracy(task="binary", threshold=0.5).to(device),
@@ -182,7 +189,7 @@ def calc_hits_metrics(
     hits_metrics: dict[str, Metric],
 ) -> Dict[str, Tensor]:
     res_dict = {}
-    outputs = outputs[:, :, 1]
+    outputs = outputs.squeeze(-1)
     for metric in hits_metrics:
         res_dict[metric] = hits_metrics[metric](outputs, targets).to(outputs.device)
 
@@ -215,9 +222,7 @@ def train_epoch(
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
-                [NUM_CANDIDATES]
-                * outputs["params"].shape[-3]
-                # if we have intermediate losses, shape is 4 dim, else 3 dim
+                [NUM_CANDIDATES] * batch["inputs"].shape[0]
             ).to(device),
             targets_lengths=batch["n_tracks_per_sample"].to(device),
         )
@@ -284,9 +289,7 @@ def val_epoch(
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
-                [MAX_EVENT_TRACKS]
-                * outputs["params"].shape[-3]
-                # if we have intermediate losses, shape is 4 dim, else 3 dim
+                [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
             ).to(device),
             targets_lengths=batch["n_tracks_per_sample"].to(device),
         )
