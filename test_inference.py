@@ -144,7 +144,6 @@ def get_tracks_dists(pred_params, target_params, pred_tracks, target_tracks):
             matched_outputs[track_num][:min_len],
             matched_targets[track_num][:min_len]
         ).item())
-    print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
     return outputs
 
 
