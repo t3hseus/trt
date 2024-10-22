@@ -381,7 +381,6 @@ class TRTBaseline(nn.Module):
 
         mask = (outputs_segmentation.sigmoid() > 0.5).squeeze(-1)
         x_encoder = x_encoder[mask]
-        print("x encoder", x_encoder.shape)
 
         return {
             "hit_logits": outputs_segmentation,
