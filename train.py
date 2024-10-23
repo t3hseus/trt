@@ -22,20 +22,21 @@ seed_everything(13)
 MAX_EVENT_TRACKS = 5
 NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
 TRUNCATION_LENGTH = 1024
-BATCH_SIZE = 1
-NUM_EVENTS_TRAIN = 1  # 50000
-NUM_EVENTS_VALID = 1  # 10000
-EPOCHS_NUM = 3000
+BATCH_SIZE = 4
+NUM_EVENTS_TRAIN = 4  # 50000
+NUM_EVENTS_VALID = 4 # 10000
+EPOCHS_NUM = 30
 INTERMEDIATE = False
 FREEZE = False
-PRETRAINED_PATH = None  # "weights/trt_hybrid_val.pt"
+PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
 BASELINE = True
+
 
 def main():
     writer = SummaryWriter()
     out_dir = pjoin(
         r"weights",
-        datetime.today().strftime("%Y-%m-%d"),
+        datetime.today().strftime("%Y-%m-%d-%H-%M-%S"),
     )
 
     hits_norm = HitsNormalizer()  # None
@@ -104,17 +105,20 @@ def main():
             epoch=epoch,
             out_dir=out_dir,
         )
-        val_loss, min_loss_val = val_epoch(
-            val_loader=val_loader,
-            model=model,
-            criterion=criterion,
-            min_loss_val=min_loss_val,
-            writer=writer,
-            hits_metrics=hits_metrics,
-            device=device,
-            epoch=epoch,
-            out_dir=out_dir,
-        )
+
+        with torch.no_grad():
+            val_loss, min_loss_val = val_epoch(
+                val_loader=val_loader,
+                model=model,
+                criterion=criterion,
+                min_loss_val=min_loss_val,
+                writer=writer,
+                hits_metrics=hits_metrics,
+                device=device,
+                epoch=epoch,
+                out_dir=out_dir,
+            )
+
         progress_bar.set_postfix(
             {
                 "epoch": epoch,
@@ -159,13 +163,13 @@ def prepare_data(
         truncation_length=truncation_length,
         hits_normalizer=hits_norm,
         track_params_normalizer=params_norm,
-        shuffle=True,
+        shuffle=False,
         mode=DatasetMode.val,
     )
     val_loader = DataLoader(
         val_data,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,
         collate_fn=collate_fn_with_segmentation_loss,
         num_workers=4,
         pin_memory=False,
@@ -238,7 +242,7 @@ def train_epoch(
 
         batch_metrics = calc_hits_metrics(
             outputs=outputs["hit_logits"],
-            targets=batch["hit_labels"].to(device),
+            targets=(batch["hit_labels"].to(device) > -1).to(torch.float),
             hits_metrics=hits_metrics,
         )
         batch_metrics.update(loss_components)
@@ -280,32 +284,31 @@ def val_epoch(
     num_val_batches = 0
     model.eval()
     for batch in val_loader:
-        with torch.no_grad():
-            num_val_batches += 1
-            outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
-            loss, loss_components = criterion(
-                preds=outputs,
-                targets={
-                    "targets": batch["targets"].to(device),
-                    "labels": batch["labels"].to(device),
-                    "hit_labels": batch["hit_labels"].to(device),
-                },
-                preds_lengths=torch.LongTensor(
-                    [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
-                ).to(device),
-                targets_lengths=batch["n_tracks_per_sample"].to(device),
-            )
-            val_loss += loss.detach().item()
+        num_val_batches += 1
+        outputs = model(batch["inputs"].to(device), batch["mask"].to(device))
+        loss, loss_components = criterion(
+            preds=outputs,
+            targets={
+                "targets": batch["targets"].to(device),
+                "labels": batch["labels"].to(device),
+                "hit_labels": batch["hit_labels"].to(device),
+            },
+            preds_lengths=torch.LongTensor(
+                [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
+            ).to(device),
+            targets_lengths=batch["n_tracks_per_sample"].to(device),
+        )
+        val_loss += loss.detach().item()
 
-            writer.add_scalar(
-                "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
-            )
+        writer.add_scalar(
+            "val_loss_batch", loss, epoch * len(val_loader) + num_val_batches
+        )
 
-            batch_metrics = calc_hits_metrics(
-                outputs=outputs["hit_logits"],
-                targets=batch["hit_labels"].to(device),
-                hits_metrics=hits_metrics,
-            )
+        batch_metrics = calc_hits_metrics(
+            outputs=outputs["hit_logits"],
+            targets=(batch["hit_labels"].to(device) > -1).to(torch.float),
+            hits_metrics=hits_metrics,
+        )
         batch_metrics.update(loss_components)
         for metric in batch_metrics:
             writer.add_scalar(

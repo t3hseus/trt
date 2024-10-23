@@ -64,6 +64,7 @@ def inference(
     pred_clusters_num = 0
     all_tracks_num = 0
     clusters_accuracies_vs_number = {i: [] for i in range(6)}
+    fitted_distances = []
     for ev in tqdm(range(num_events)):
         event, hits, fakes, labels, hits_norm, fakes_norm, track_params = generate_event(event_gen)
         inputs, hit_labels, mask, hits, track_labels = convert_event_to_batch(hits_norm, fakes_norm, hits, fakes, labels)
@@ -98,14 +99,21 @@ def inference(
             target_track_ids, target_track_nums = torch.unique(torch.tensor(target_track_labels), return_counts=True)
             target_id = target_track_ids[0].item()
             found_target_part = target_track_nums[0].item()
-            if found_target_part > len(track_labels[target_id]) * 0.8:
-                correct_clusters += 1
             all_clusters += 1
+            try:
+                if found_target_part > len(track_labels[target_id]) * 0.8:
+                    correct_clusters += 1
+            except TypeError:
+                # If only one
+                continue
             clusters_accuracies_vs_number[num_tracks].append(correct_clusters/all_clusters)
+
         true_clusters_num += correct_clusters
         pred_clusters_num += all_clusters
         all_tracks_num += num_tracks
 
+        fitted_param_dists = get_fitted_params_dists(clustered_hits,target_tracks)
+        fitted_distances.extend(fitted_param_dists)
         if ev in plot_events:
             plot(
                 ev,
@@ -116,7 +124,7 @@ def inference(
             )
     print("Precision in track prediction: ", true_clusters_num / pred_clusters_num)
     print("Recall in track prediction: ", true_clusters_num / all_tracks_num)
-    plot_histograms(accuracies, vertex_dists, params_distances, clusters_accuracies_vs_number, out_dir)
+    plot_histograms(accuracies, fitted_distances, out_dir)
 
 
 def get_params_dists(pred_tracks, target_tracks):
@@ -127,6 +135,68 @@ def get_params_dists(pred_tracks, target_tracks):
     )
     #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
     return diffs
+
+def get_fitted_params_dists(pred_tracks, target_tracks):
+    p_pred = []
+    p_target = []
+    for track in pred_tracks:
+        curve = get_curve(track)
+        if curve is not None:
+            p_pred.append(curve)
+    for track in target_tracks:
+        curve = get_curve(track)
+        if curve is not None:
+            p_target.append(curve)
+    pred_vectors = torch.tensor(p_pred)
+    target_vectors = torch.tensor(p_target)
+
+    if len(pred_vectors.shape) == 1:
+        pred_vectors = pred_vectors.unsqueeze(0)
+    if len(target_vectors.shape) == 1:
+        target_vectors = target_vectors.unsqueeze(0)
+    if target_vectors.shape[1] == 0 or pred_vectors.shape[1] == 0:
+        return [1000.]
+    row_ind, col_ind = match_targets(
+        outputs=pred_vectors,
+        targets=target_vectors,
+    )
+    matched_outputs = pred_vectors[row_ind]
+    matched_targets = target_vectors[col_ind]
+    outputs = []
+    for track_num in range(len(matched_targets)):
+        outputs.append(F.l1_loss(
+            matched_outputs[track_num],
+            matched_targets[track_num]
+        ).item())
+    #print(f"Matched by params | preds: {row_ind} and targets: {col_ind}")
+    return outputs
+
+def get_curve(hits):
+    """data is a 3d array of shape [n_hits, 3]
+    outputs 9 fitted coefficients
+    """
+    import numpy as np
+    from scipy.optimize import curve_fit
+    from numpy.polynomial import Polynomial
+    t = np.linspace(-1, 1, len(hits))
+
+    # curve fit function
+    def func(t, x2, x1, x0, y2, y1, y0, z2, z1, z0):
+        Px = Polynomial([x2, x1, x0])
+        Py = Polynomial([y2, y1, y0])
+        Pz = Polynomial([z2, z1, z0])
+        return np.concatenate([Px(t), Py(t), Pz(t)])
+
+    start_vals = [1, 1, 1,
+                  1, 1, 1,
+                  -1, -1, -1]
+    xyz = np.concatenate([hits[:, 0], hits[:, 1], hits[:, 2]])
+    # xyz = data.flatten()
+    if len(xyz) > 9:
+        popt, _ = curve_fit(func, t, xyz, p0=start_vals)
+    else:
+        return None
+    return popt
 
 
 def get_tracks_dists(pred_params, target_params, pred_tracks, target_tracks):
@@ -279,12 +349,18 @@ def plot(
     side_by_side.write_html(pjoin(out_dir, str(i) + "_side_by_side.html"))
 
 
-def plot_histograms(accuracies, vertex_dists, param_distances, track_distances, out_dir) -> None:
+def plot_histograms(accuracies, fitted_dists, out_dir) -> None:
     sns.displot(np.array(accuracies), bins=82, kde=True)
     plt.ylabel("Probability")
     plt.xlabel("Hit segmentation accuracy")
     plt.title("Hit segmentation accuracy histogram")
     plt.savefig(pjoin(out_dir, "accuracy_hist"),  bbox_inches='tight')
+    sns.displot(np.array(fitted_dists), bins=82, kde=True)
+    plt.ylabel("Probability")
+    plt.xlabel("Histogram of fitted_dists")
+    plt.title("Histogram of distances between predicted and gt fitted curve params")
+    plt.savefig(pjoin(out_dir, "fitted_distances_hist"), bbox_inches='tight')
+    print(f"Mean fitted distance: {np.mean(fitted_dists)}")
 
 
 def match_targets(outputs, targets):

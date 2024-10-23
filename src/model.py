@@ -394,39 +394,29 @@ class TRTBaseline(nn.Module):
             }
 
         mask = (outputs_segmentation.sigmoid() > 0.5).squeeze(-1)
-        outputs_vertex = torch.tensor(
-            [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
-        )
         batch_size = x.shape[0]
         params = []
-        output_labels = []
+        cluster_labels = []
         for i in range(batch_size):
-            x_hits = x[i, mask[i]]
-            if x_hits.shape[0] < 30:
-                params.append(torch.zeros(4, dtype=torch.float, device=x_hits.device))
+            x_hits = x[i, mask[i]].cpu().detach().numpy()
 
-                output_labels.append(np.ones(mask[i].sum()))
-                continue
+            if x_hits.shape[0] < 10:
+                cluster_labels.append(np.zeros(x_hits.shape[0]))
+            else:
+                # clusters num int(np.round(x_hits.shape[0] / 33))
+                clust = DBSCAN(eps=0.1, min_samples=2)
+                clust.fit(x_hits)
+                cluster_labels.append(clust.labels_)
 
-            # clust = AgglomerativeClustering(
-                #n_clusters=int(np.round(x_hits.shape[0] / 32))
-            #)
-            clust = DBSCAN(eps=0.1, min_samples=4)
-            clust.fit(x_hits.cpu().detach().numpy())
             params.append([])
-
-            print("found hits", x_hits.shape)
-            print("clustering")
-            print(clust.labels_)
-
-            labels = clust.labels_
-            output_labels.append(labels)
 
         output_params = torch.zeros((len(params), 4))
 
         return {
             "params": output_params,
-            "vertex": outputs_vertex,
+            "vertex": torch.tensor(
+                [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
+            ),
             "hit_logits": outputs_segmentation,
-            "clusters": torch.tensor(output_labels)
+            "cluster_labels": cluster_labels,
         }

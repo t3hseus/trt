@@ -1,8 +1,8 @@
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Tuple
 
 import torch
 from scipy.optimize import linear_sum_assignment
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import v_measure_score
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -93,8 +93,8 @@ class TRTHungarianLoss(nn.Module):
         pred_logits: Tensor,
         target_labels: Tensor,
         batch_size: int,
-        preds_segmentation_logits: Optional[Tensor] = None,
-        target_segmentation_labels: Optional[Tensor] = None,
+        preds_segmentation_logits: Tensor,
+        target_segmentation_labels: Tensor,
     ) -> Tuple[Tensor, Tensor, Tensor]:
         hungarian_loss = torch.tensor(0.0).to(pred_params.device)
         label_loss = torch.tensor(0.0).to(pred_params.device)
@@ -122,14 +122,10 @@ class TRTHungarianLoss(nn.Module):
             )
             label_loss += self._class_loss_func(pred_logits[i], matched_targets)
 
-            if (
-                preds_segmentation_logits is not None
-                and target_segmentation_labels is not None
-            ):
-                segmentation_loss += self._segmentation_loss_func(
-                    preds_segmentation_logits[i].squeeze(-1),
-                    target_segmentation_labels[i]
-                )
+            segmentation_loss += self._segmentation_loss_func(
+                preds_segmentation_logits[i].squeeze(-1),
+                target_segmentation_labels[i]
+            )
 
         return hungarian_loss, label_loss, segmentation_loss
 
@@ -145,12 +141,8 @@ class TRTHungarianLoss(nn.Module):
         target_labels = targets["labels"]
         pred_params = preds["params"]
         target_params = targets["targets"]
-        preds_segmentation_logits = (
-            preds["hit_logits"] if "hit_logits" in preds else None
-        )
-        target_segmentation_labels = (
-            targets["hit_labels"] if "hit_labels" in targets else None
-        )
+        preds_segmentation_logits = preds["hit_logits"]
+        target_segmentation_labels = (targets["hit_labels"] > -1).to(torch.float)
         if not self.intermediate:
             hungarian_loss, label_loss, segmentation_loss = self._calc_loss(
                 pred_params=pred_params,
@@ -227,15 +219,33 @@ class BaselineLoss(nn.Module):
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
         batch_size = preds["hit_logits"].shape[0]
         device = preds["hit_logits"].device
+        preds_segmentation_logits = preds["hit_logits"].squeeze(-1)
+        target_segmentation_labels = (targets["hit_labels"] > -1).to(torch.float)
+        target_cluster_labels = targets["hit_labels"].detach().cpu().numpy()
         segmentation_loss = torch.tensor(0.0).to(device)
+        clustering_score = torch.tensor(0.0).to(device)
         for i in range(batch_size):
             segmentation_loss += self._segmentation_loss_func(
-                preds["hit_logits"][i].squeeze(-1), targets["hit_labels"][i]
+                preds_segmentation_logits[i], target_segmentation_labels[i]
             )
 
-        segmentation_loss /= batch_size
+            if "cluster_labels" in preds:
+                mask = (
+                    preds["hit_logits"][i].sigmoid() > 0.5
+                ).detach().cpu().numpy().squeeze(-1)
+                true_labels = target_cluster_labels[i, mask]
+                clustering_score += v_measure_score(
+                    labels_true=true_labels, labels_pred=preds["cluster_labels"][i]
+                )
 
-        return segmentation_loss, {}
+        segmentation_loss /= batch_size
+        clustering_score /= batch_size
+
+        additional_losses = {}
+        if "cluster_labels" in preds:
+            additional_losses["clustering_loss"] = clustering_score
+
+        return segmentation_loss, additional_losses
 
 
 if __name__ == "__main__":

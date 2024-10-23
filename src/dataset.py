@@ -225,7 +225,7 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
 
     for i, sample in enumerate(samples):
         batch_inputs[i, : len(sample["hits"])] = sample["hits"]
-        batch_hit_labels[i, : len(sample["hits"])] = sample["hit_labels"] > -1
+        batch_hit_labels[i, : len(sample["hits"])] = sample["hit_labels"]
         batch_mask[i, : len(sample["hits"])] = sample["mask"]
         batch_params[i, : len(sample["params"])] = sample["params"]
         batch_labels[i, : len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
