@@ -29,7 +29,7 @@ EPOCHS_NUM = 30
 INTERMEDIATE = False
 FREEZE = False
 PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
-BASELINE = True
+BASELINE = False
 
 
 def main():
@@ -253,10 +253,10 @@ def train_epoch(
                 epoch * len(train_loader) + num_train_batches,
             )
 
-    if train_loss < min_loss_train:
-        min_loss_train = train_loss
+    if train_loss / len(train_loader) < min_loss_train:
+        min_loss_train = train_loss / len(train_loader)
         os.makedirs(out_dir, exist_ok=True)
-        torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_train.pt"))
+        torch.save(model.state_dict(), pjoin(out_dir, f"trt_hybrid_train_{epoch}.pt"))
 
     writer.add_scalar("train_loss_epoch", train_loss / len(train_loader), epoch)
     for metric in hits_metrics:
@@ -317,10 +317,10 @@ def val_epoch(
                 epoch * len(val_loader) + num_val_batches,
             )
 
-    if val_loss < min_loss_val:
-        min_loss_val = val_loss
+    if val_loss / len(val_loader) < min_loss_val:
+        min_loss_val = val_loss / len(val_loader)
         os.makedirs(out_dir, exist_ok=True)
-        torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_val.pt"))
+        torch.save(model.state_dict(), pjoin(out_dir, f"trt_hybrid_val_{epoch}.pt"))
 
     writer.add_scalar("val_loss_epoch", val_loss / len(val_loader), epoch)
     for metric in hits_metrics:

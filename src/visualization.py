@@ -34,7 +34,7 @@ def draw_event(
                 y=track_hits[:, 1],
                 z=track_hits[:, 2],
                 marker=dict(
-                    size=2,
+                    size=4,
                     color=colors[i],
                 ),
                 mode="markers",
@@ -50,7 +50,7 @@ def draw_event(
                 y=[vertex[1]],
                 z=[vertex[2]],
                 marker=dict(
-                    size=3,
+                    size=4,
                     color="red",
                 ),
                 mode="markers",
@@ -108,14 +108,14 @@ def display_side_by_side(
     # Get traces from the left figure and add them to the first subplot
     for trace in predicted_event_fig.data:
         trace_left = trace.to_plotly_json()
-        trace_left["name"] = f"[pred] {trace_left['name']}"
+        trace_left["name"] = f"<b> [pred] {trace_left['name']} </b>"
         trace_left["showlegend"] = True
         fig.add_trace(go.Scatter3d(**trace_left), row=1, col=1)
 
     # Get traces from the right figure and add them to the second subplot
     for trace in original_event_fig.data:
         trace_right = trace.to_plotly_json()
-        trace_right["name"] = f"[orig] {trace_right['name']}"
+        trace_right["name"] = f"<b> [orig] {trace_right['name']} </b>"
         trace_right["showlegend"] = True
         fig.add_trace(go.Scatter3d(**trace_right), row=1, col=2)
 

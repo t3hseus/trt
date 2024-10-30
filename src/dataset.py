@@ -221,7 +221,7 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
     batch_params = np.zeros(target_shape, dtype=np.float32)
     batch_orig_params = np.zeros(target_shape, dtype=np.float32)
     batch_labels = np.ones((batch_size, max_n_tracks), dtype=np.int32)
-    batch_hit_labels = np.zeros((batch_size, max_n_hits), dtype=np.int32)
+    batch_hit_labels = np.zeros((batch_size, max_n_hits), dtype=np.int32) - 1
 
     for i, sample in enumerate(samples):
         batch_inputs[i, : len(sample["hits"])] = sample["hits"]
