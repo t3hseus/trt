@@ -37,8 +37,10 @@ def adjust_targets(row_ind, col_ind, targets, num_candidates=10):
     return adjusted_targets
 
 
-def match_targets(outputs, targets):
-    cost_matrix = torch.cdist(outputs, targets, p=1)
+def match_targets(outputs, targets, weights: tuple[float, float] = (0.5, 0.5)):
+    cost_matrix_params = torch.cdist(outputs["params"], targets["params"], p=1)
+    cost_matrix_coords = torch.cdist(outputs["coords"], targets["coords"], p=1)
+    cost_matrix = weights[0] * cost_matrix_params + weights[1] * cost_matrix_coords
     row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
 
@@ -92,26 +94,40 @@ class TRTHungarianLoss(nn.Module):
         targets_lengths: Tensor,
         pred_logits: Tensor,
         target_labels: Tensor,
+        pred_coords: Tensor,
+        target_coords: Tensor,
         batch_size: int,
         preds_segmentation_logits: Tensor,
         target_segmentation_labels: Tensor,
-    ) -> Tuple[Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         hungarian_loss = torch.tensor(0.0).to(pred_params.device)
+        coords_loss = torch.tensor(0.0).to(pred_params.device)
         label_loss = torch.tensor(0.0).to(pred_params.device)
         segmentation_loss = torch.tensor(0.0).to(pred_params.device)
-
         if not self.params_with_vertex:
             target_params = target_params[..., 3:]
 
         for i in range(batch_size):
+            pred_dict = {
+                "params": pred_params[i, : preds_lengths[i]],
+                "coords": pred_coords[i, : preds_lengths[i]],
+            }
+            target_dict = {
+                "params": target_params[i, : targets_lengths[i]],
+                "coords": target_coords[i, : targets_lengths[i]]
+            }
             row_ind, col_ind = match_targets(
-                outputs=pred_params[i, : preds_lengths[i]],
-                targets=target_params[i, : targets_lengths[i]],
+                outputs=pred_dict,
+                targets=target_dict,
             )
             matched_outputs = pred_params[i, row_ind]
             matched_targets = target_params[i, col_ind]
             hungarian_loss += compute_hungarian_loss(
                 matched_outputs, matched_targets, distance=self._params_distance
+            )
+
+            coords_loss += F.l1_loss(
+                pred_coords[i, row_ind], target_coords[i, col_ind]
             )
 
             matched_targets = adjust_targets(
@@ -127,7 +143,7 @@ class TRTHungarianLoss(nn.Module):
                 target_segmentation_labels[i]
             )
 
-        return hungarian_loss, label_loss, segmentation_loss
+        return hungarian_loss, coords_loss, label_loss, segmentation_loss
 
     def forward(
         self,
@@ -141,12 +157,16 @@ class TRTHungarianLoss(nn.Module):
         target_labels = targets["labels"]
         pred_params = preds["params"]
         target_params = targets["targets"]
+        pred_coords = preds["coords"]
+        target_coords = targets["end_hits"]
         preds_segmentation_logits = preds["hit_logits"]
         target_segmentation_labels = (targets["hit_labels"] > -1).to(torch.float)
         if not self.intermediate:
-            hungarian_loss, label_loss, segmentation_loss = self._calc_loss(
+            hungarian_loss, coords_loss, label_loss, segmentation_loss = self._calc_loss(
                 pred_params=pred_params,
                 target_params=target_params,
+                pred_coords=pred_coords,
+                target_coords=target_coords,
                 preds_lengths=preds_lengths,
                 targets_lengths=targets_lengths,
                 pred_logits=pred_logits,
@@ -162,7 +182,7 @@ class TRTHungarianLoss(nn.Module):
             segmentation_loss = torch.tensor(0.0).to(pred_params.device)
 
             for step in range(pred_params.shape[0]):
-                hungarian_loss_step, label_loss_step, segmentation_loss_step = (
+                hungarian_loss_step, coords_loss, label_loss_step, segmentation_loss_step = (
                     self._calc_loss(
                         pred_params=pred_params[step],
                         target_params=target_params,
@@ -180,6 +200,7 @@ class TRTHungarianLoss(nn.Module):
                 segmentation_loss += segmentation_loss_step
 
         hungarian_loss /= batch_size
+        coords_loss /= batch_size
         label_loss /= batch_size
         segmentation_loss /= batch_size
 
@@ -190,11 +211,13 @@ class TRTHungarianLoss(nn.Module):
         total_loss = (
             self._weights[0] * hungarian_loss
             + self._weights[1] * label_loss
-            + self._weights[2] * vertex_loss
-            + self._weights[3] * segmentation_loss
+            + self._weights[2] * label_loss
+            + self._weights[3] * vertex_loss
+            + self._weights[4] * segmentation_loss
         )
         loss_components = {
             "params_dist": hungarian_loss.cpu().detach().item(),
+            "coords_dist": coords_loss.cpu().detach().item(),
             "matching_loss": label_loss.cpu().detach().item(),
             "vertex_dist": vertex_loss.cpu().detach().item(),
             "segmentation_loss": segmentation_loss.cpu().detach().item(),

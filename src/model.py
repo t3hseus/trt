@@ -264,20 +264,26 @@ class TRTHybrid(nn.Module):
             self.activation,
             nn.Linear(channels // 4, num_classes + 1),
         )
-        self.params_head = nn.Sequential(
+
+        self.query_head = nn.Sequential(
             nn.Linear(channels, channels // 2),
             nn.LayerNorm(channels // 2),
             self.activation,
+        )
+        self.params_head = nn.Sequential(
             nn.Linear(channels // 2, channels // 4),
             nn.LayerNorm(channels // 4),
             self.activation,
             nn.Linear(channels // 4, num_out_params - 3),
         )
-        self.vertex_head = nn.Sequential(
-            nn.Linear(channels, channels // 2),  # num of vertex elements
-            nn.LayerNorm(channels // 2),
-            self.activation,
+        self.coords_head = nn.Sequential(
             nn.Linear(channels // 2, channels // 4),
+            nn.LayerNorm(channels // 4),
+            self.activation,
+            nn.Linear(channels // 4, 6),
+        )
+        self.vertex_head = nn.Sequential(
+            nn.Linear(channels, channels // 4),
             nn.LayerNorm(channels // 4),
             self.activation,
             nn.Linear(channels // 4, 3),  # num of vertex elements
@@ -330,8 +336,9 @@ class TRTHybrid(nn.Module):
             memory_mask=mask,
         )
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
-        outputs_coord = self.params_head(x)
-
+        x = self.query_head(x)
+        outputs_params = self.params_head(x)
+        outputs_coord = self.coords_head(x)
         if return_params_with_vertex:
             # for evaluation (to hide concatenation to
             vertex = outputs_vertex.unsqueeze(-2).expand(
@@ -344,7 +351,8 @@ class TRTHybrid(nn.Module):
 
         return {
             "logits": outputs_class,
-            "params": outputs_coord,
+            "params": outputs_params,
+            "coords": outputs_coord,
             "vertex": outputs_vertex,
             "hit_logits": outputs_segmentation,
         }

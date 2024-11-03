@@ -25,7 +25,7 @@ TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 4
 NUM_EVENTS_TRAIN = 4  # 50000
 NUM_EVENTS_VALID = 4 # 10000
-EPOCHS_NUM = 30
+EPOCHS_NUM = 1000
 INTERMEDIATE = False
 FREEZE = False
 PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
@@ -79,7 +79,7 @@ def main():
         model = freeze_model(model, model.params_head)
     if not BASELINE:
         criterion = TRTHungarianLoss(
-            weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
+            weights=(0.25, 0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
         ).to(device)
     else:
         criterion = BaselineLoss().to(device)
@@ -224,6 +224,7 @@ def train_epoch(
             targets={
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
+                "end_hits": batch["end_hits"].to(device),
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
@@ -291,6 +292,7 @@ def val_epoch(
             targets={
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
+                "end_hits": batch["end_hits"].to(device),
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(

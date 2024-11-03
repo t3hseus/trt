@@ -396,7 +396,8 @@ class SPDEventGenerator:
         self,
         detector_eff: Optional[float] = None,
         add_fakes: Optional[bool] = None,
-    ) -> Event:
+        return_additional_info: bool = False
+    ) -> Event | tuple[Event, dict[str, np.ndarray]]:
         if detector_eff is None:
             detector_eff = self.detector_eff
         if add_fakes is None:
@@ -417,17 +418,24 @@ class SPDEventGenerator:
         track_ids = []
         params = {}
         fakes = None
-
+        additional = {
+            "first_hits": [],
+            "last_hits": []
+        }
         for track in range(0, n_tracks):
             track_hits = np.asarray([], dtype=np.float32)  # empty array
             # if generator returns empty track, call it again
             # until the needed track will be generated
+            track_momentums = track_params = False
             while track_hits.size == 0:
                 track_hits, track_momentums, track_params = self.generate_track_hits(
                     vertex=vertex, radii=self._radii, detector_eff=detector_eff
                 )
             # add to the global list of hits
             hits.append(track_hits)
+            if return_additional_info:
+                additional["first_hits"].append(track_hits[0])
+                additional["last_hits"].append(track_hits[-1])
             momentums.append(track_momentums)
             params[track] = track_params
             track_ids.append(np.full(len(track_hits), track))
@@ -439,6 +447,19 @@ class SPDEventGenerator:
 
         if add_fakes:
             fakes = self.generate_fakes(n_tracks=n_tracks, radii=self._radii)
+
+        if return_additional_info:
+            additional["first_hits"] = np.vstack(additional["first_hits"])
+            additional["last_hits"] = np.vstack(additional["last_hits"])
+            return Event(
+                hits=hits,
+                track_ids=track_ids,
+                momentums=momentums,
+                fakes=fakes,
+                track_params=params,
+                missing_hits_mask=missing_hits_mask,
+                vertex=vertex,
+            ), additional
 
         return Event(
             hits=hits,

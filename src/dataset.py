@@ -27,6 +27,8 @@ class DatasetSample(TypedDict):
     param_labels: ArrayN[np.int32]
     mask: ArrayN[np.float32]
     orig_params: Union[TParamsArr, NormTParamsArr]
+    first_hits: ArrayNx3[np.float32]
+    last_hits: ArrayNx3[np.float32]
 
 
 class BatchSample(TypedDict):
@@ -43,6 +45,10 @@ class BatchSampleWithLogits(BatchSample):
 
 class BatchSampleWithHitLabels(BatchSampleWithLogits):
     hit_labels: torch.LongTensor
+
+
+class BatchSampleWithEndHits(BatchSampleWithHitLabels):
+    end_hits: torch.FloatTensor
 
 
 class SPDEventsDataset(Dataset):
@@ -93,8 +99,8 @@ class SPDEventsDataset(Dataset):
         # prevent dataset from generation of new samples each epoch
         np.random.seed(self._initial_seed + idx)
         # generate sample
-        event = self.spd_gen.generate_spd_event()
-
+        event, additional = self.spd_gen.generate_spd_event(return_additional_info=True)
+        first_hits, last_hits = additional.values()
         # get all hits including fakes
         if self._add_fakes:
             hits = np.vstack([event.hits, event.fakes])
@@ -153,12 +159,16 @@ class SPDEventsDataset(Dataset):
             # shuffle params without shuffling padding
             shuffle_idx = np.random.permutation(event.n_tracks)
             params[: event.n_tracks] = params[shuffle_idx]
+            first_hits[: event.n_tracks] = first_hits[shuffle_idx]
+            last_hits[: event.n_tracks] = last_hits[shuffle_idx]
             orig_params[: event.n_tracks] = orig_params[shuffle_idx]
             param_labels[: event.n_tracks] = param_labels[shuffle_idx]
 
         # data normalization
         if self.hits_normalizer:
             hits = self.hits_normalizer(hits)
+            first_hits = self.hits_normalizer(first_hits)
+            last_hits = self.hits_normalizer(last_hits)
 
         if self.truncation_length is not None:
             # truncate inputs
@@ -172,6 +182,8 @@ class SPDEventsDataset(Dataset):
             orig_params=orig_params,
             param_labels=param_labels,
             mask=np.ones(len(hits), dtype=bool),
+            first_hits=first_hits,
+            last_hits=last_hits
         )
 
 
@@ -219,6 +231,7 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
     batch_params = np.zeros(target_shape, dtype=np.float32)
+    batch_end_hits = np.zeros((batch_size, max_n_tracks, 6), dtype=np.float32)
     batch_orig_params = np.zeros(target_shape, dtype=np.float32)
     batch_labels = np.ones((batch_size, max_n_tracks), dtype=np.int32)
     batch_hit_labels = np.zeros((batch_size, max_n_hits), dtype=np.int32) - 1
@@ -228,13 +241,16 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
         batch_hit_labels[i, : len(sample["hits"])] = sample["hit_labels"]
         batch_mask[i, : len(sample["hits"])] = sample["mask"]
         batch_params[i, : len(sample["params"])] = sample["params"]
+        batch_end_hits[i, : len(sample["first_hits"]), :3] = sample["first_hits"]
+        batch_end_hits[i, : len(sample["last_hits"]), 3:] = sample["last_hits"]
         batch_labels[i, : len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
         batch_orig_params[i, : len(sample["orig_params"])] = sample["orig_params"]
 
-    return BatchSampleWithHitLabels(
+    return BatchSampleWithEndHits(
         inputs=torch.tensor(batch_inputs, dtype=torch.float),
         mask=torch.from_numpy(batch_mask),
         targets=torch.from_numpy(batch_params),
+        end_hits=torch.from_numpy(batch_end_hits),
         orig_params=torch.from_numpy(batch_orig_params),
         n_tracks_per_sample=torch.LongTensor(n_tracks_per_sample),
         labels=torch.from_numpy(batch_labels).to(torch.long),
