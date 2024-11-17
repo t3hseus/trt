@@ -14,7 +14,8 @@ from tqdm import tqdm
 
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
 from src.loss import TRTHungarianLoss, BaselineLoss
-from src.model import TRTHybrid, TRTBaseline
+from src.model import TRTHybrid
+from src.models.baseline import TRTBaseline
 from src.models.model_pointnet import TRTPointnetHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 

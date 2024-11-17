@@ -9,7 +9,7 @@ from pytorch_lightning import seed_everything
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
 
-from src.model import TRTBaseline
+from src.models.baseline import TRTBaseline
 
 sys.path.append("../")
 from os.path import join as pjoin

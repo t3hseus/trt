@@ -1,8 +1,7 @@
-from typing import Dict
-
 import torch
-from sklearn.cluster import AgglomerativeClustering, DBSCAN
 from torch import Tensor, nn
+
+from src.models.layers import TRTDetectDecoderLayer
 
 
 class PointTransformerEncoder(nn.Module):
@@ -138,59 +137,6 @@ class TRTDetectDecoder(nn.Module):
             return torch.stack(intermediate)
 
         return output
-
-
-class TRTDetectDecoderLayer(nn.Module):
-    def __init__(
-        self,
-        channels: int = 64,
-        dim_ff: int = 32,
-        num_heads: int = 4,
-        dropout: float = 0.0,
-    ) -> None:
-        super().__init__()
-
-        self.self_attn = nn.MultiheadAttention(
-            channels, num_heads, dropout=dropout, batch_first=True
-        )
-        self.cross_attn = nn.MultiheadAttention(
-            channels, num_heads, dropout=dropout, batch_first=True
-        )
-
-        self.lin1 = nn.Linear(channels, dim_ff)
-        self.lin2 = nn.Linear(dim_ff, channels)
-
-        self.norm1 = nn.LayerNorm(channels)
-        self.norm2 = nn.LayerNorm(channels)
-        self.norm3 = nn.LayerNorm(channels)
-
-        self.dropout = nn.Dropout(dropout)
-
-        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
-
-    def forward(
-        self,
-        query: Tensor,
-        memory: Tensor,
-        query_pos: Tensor,
-        memory_mask: Tensor | None = None,
-        memory_key_padding_mask: Tensor = None,
-    ) -> Tensor:
-        q = k = query + query_pos
-        x_att = self.self_attn(q, k, value=query)[0]
-        query = self.norm1(query + self.dropout(x_att))
-        x_att = self.cross_attn(
-            query=(query + query_pos),
-            key=memory,
-            value=memory,
-            key_padding_mask=~memory_key_padding_mask,
-            attn_mask=memory_mask,
-        )[0]
-        x = self.norm2(query + self.dropout(x_att))
-        x2 = self.lin2(self.dropout(self.activation(self.lin1(x))))
-        x = x + self.dropout(x2)
-        x = self.norm3(x)
-        return x
 
 
 class TRTHybrid(nn.Module):
@@ -355,76 +301,4 @@ class TRTHybrid(nn.Module):
             "coords": outputs_coord,
             "vertex": outputs_vertex,
             "hit_logits": outputs_segmentation,
-        }
-
-
-import numpy as np
-
-
-class TRTBaseline(nn.Module):
-    def __init__(
-        self,
-        channels: int = 64,
-        input_channels: int = 3,
-        num_heads: int = 4,
-        num_candidates: int = 5
-    ) -> None:
-        super().__init__()
-
-        self.num_heads = num_heads
-        self.num_candidates = num_candidates
-
-        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
-
-        self.pre_emb_encoder = nn.Linear(input_channels, channels)
-
-        self.encoder = PointTransformerEncoder(
-            channels=channels, num_heads=self.num_heads
-        )
-        self.segmentation_head = nn.Sequential(
-            nn.Linear(channels, channels // 2),
-            nn.LayerNorm(channels // 2),
-            self.activation,
-            nn.Linear(channels // 2, channels // 4),
-            nn.LayerNorm(channels // 4),
-            self.activation,
-            nn.Linear(channels // 4, 1),
-        )
-
-    def forward(self, x, mask=None) -> Dict[str, Tensor]:
-        x_encoder = self.pre_emb_encoder(x)
-        x_encoder = self.encoder(x_encoder, mask=mask)
-        outputs_segmentation = self.segmentation_head(x_encoder)
-
-        if self.training:
-            return {
-                "hit_logits": outputs_segmentation,
-            }
-
-        mask = (outputs_segmentation.sigmoid() > 0.5).squeeze(-1)
-        batch_size = x.shape[0]
-        params = []
-        cluster_labels = []
-        for i in range(batch_size):
-            x_hits = x[i, mask[i]].cpu().detach().numpy()
-
-            if x_hits.shape[0] < 10:
-                cluster_labels.append(np.zeros(x_hits.shape[0]))
-            else:
-                # clusters num int(np.round(x_hits.shape[0] / 33))
-                clust = DBSCAN(eps=0.1, min_samples=2)
-                clust.fit(x_hits)
-                cluster_labels.append(clust.labels_)
-
-            params.append([])
-
-        output_params = torch.zeros((len(params), 4))
-
-        return {
-            "params": output_params,
-            "vertex": torch.tensor(
-                [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
-            ),
-            "hit_logits": outputs_segmentation,
-            "cluster_labels": cluster_labels,
         }
