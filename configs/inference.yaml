@@ -1,0 +1,21 @@
+defaults:
+  - _self_
+  - model: with_coords
+  - criterion: with_coords
+  - user_settings: user_settings
+  - dataset: base
+
+project_path: ${user_settings.project_path}
+datasets_root: ${user_settings.datasets_root}
+results_dir: ${user_settings.hydra_dir}
+hydra_root: ${user_settings.hydra_root}/tests
+hydra_dir: ${user_settings.hydra_dir}
+hydra:
+  run:
+    dir: ${hydra_dir}
+
+batch_size: 1
+random_seed: 13
+num_images: 10
+logging_dir: ${hydra_dir}
+load_checkpoint: E:\projects\trt\results\hydra\2024-11-17\18-42-32\trt_hybrid_val_38.pt

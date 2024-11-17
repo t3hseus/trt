@@ -1,10 +1,11 @@
-import os
 import sys
-from datetime import datetime
 
+import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from hydra.utils import instantiate
+from omegaconf import DictConfig
 from pytorch_lightning import seed_everything
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
@@ -15,7 +16,6 @@ from os.path import join as pjoin
 import torch
 from torch.nn import functional as F
 from src.data_generation import SPDEventGenerator, TrackParams, Vertex
-from src.model import TRTHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 from src.visualization import display_side_by_side, draw_event
 
@@ -24,50 +24,37 @@ TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 1
 NUM_EVENTS_VALID = 1024
 NUM_IMAGES = 10
-PATH = r"weights\server\trt_hybrid_val.pt"
 
 seed_everything(13)
 
-
+@hydra.main(version_base=None, config_path="configs", config_name="inference")
 def inference(
-    weights_path: str = PATH,
-    num_events: int = NUM_EVENTS_VALID,
-    truncation_length: int = TRUNCATION_LENGTH,
-    max_event_tracks: int = MAX_EVENT_TRACKS,
-    num_images: int = NUM_IMAGES,
-    result_dir: str = "plots",
+    cfg: DictConfig
 ) -> None:
-    out_dir = pjoin(
-        result_dir, datetime.today().strftime("%Y-%m-%d"), PATH.split("\\")[-2]
-    )
-    os.makedirs(out_dir, exist_ok=True)
-
     event_gen = SPDEventGenerator(
         generate_fixed_tracks_num=False,
         detector_eff=0.98,
-        max_event_tracks=max_event_tracks,
+        max_event_tracks=cfg.dataset.max_event_tracks,
     )
 
-    model = TRTHybrid(
-        num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length, zero_based_decoder=False
-    )
+    model = instantiate(cfg.model)
     if not torch.cuda.is_available():
-        model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
+        model.load_state_dict(torch.load(cfg.load_checkpoint, weights_only=True, map_location=torch.device('cpu')))
     else:
-        model.load_state_dict(torch.load(weights_path, weights_only=True))
+        model.load_state_dict(torch.load(cfg.load_checkpoint, weights_only=True))
     model.eval()
     vertex_dists = []
     accuracies = []
     params_distances = {i: [] for i in ["pt", "phi", "theta", "charge"]}
     tracks_distances = []
-    plot_events = np.random.randint(0, num_events, num_images)
-    for ev in tqdm(range(num_events)):
+    plot_events = np.random.randint(0, cfg.dataset.test_samples, cfg.num_images)
+    for ev in tqdm(range(cfg.dataset.test_samples)):
         event, hits, labels, hits_norm, fakes_norm, track_params = generate_event(event_gen)
         inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
         preds = model(inputs, mask=mask)
-        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.8
-        print("Selected tracks: ", (~track_mask).sum())
+        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
+        print("Selected tracks: ", (track_mask).sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(
             event_gen, pred_tracks, pred_vertex
@@ -108,9 +95,9 @@ def inference(
                 pred_tracks,
                 pred_vertex,
                 track_mask,
-                out_dir,
+                cfg.hydra_dir,
             )
-    plot_histograms(accuracies, vertex_dists, params_distances, track_distance, out_dir)
+    plot_histograms(accuracies, vertex_dists, params_distances, track_distance, cfg.hydra_dir)
 
 
 def get_params_dists(pred_tracks, target_tracks):
@@ -259,7 +246,7 @@ def plot(
     )
     pred_event = draw_event(
         hits=pred_hits,
-        fakes=None,
+        fakes=event.fakes,
         vertex=event.vertex.numpy,
         labels=pred_labels,
     )

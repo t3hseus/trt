@@ -35,3 +35,22 @@ def vertex_distance(
     weights_ = torch.tensor(weights, device=outputs.device, requires_grad=False)
     # return torch.nn.functional.l1_loss(outputs, vertex_target) * 3
     return torch.nn.functional.l1_loss(outputs * weights_, vertex_target * weights_) * 3
+
+
+def hits_dist(preds, targets):
+    "Dist based on DTW (we get time-based sequences of hits)"
+    n, m = len(preds), len(targets)
+
+    dtw_matrix = torch.zeros((n + 1, m + 1), dtype=torch.float32)
+    dtw_matrix[0, 1:] = float("inf")
+    dtw_matrix[1:, 0] = float("inf")
+    dtw_matrix[0, 0] = 0
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            cost = (preds[i - 1] - targets[j - 1]) ** 2
+            last_min = torch.min(
+                dtw_matrix[i - 1, j], dtw_matrix[i, j - 1], dtw_matrix[i - 1, j - 1]
+            )
+            dtw_matrix[i, j] = cost + last_min
+    return dtw_matrix[n, m]
