@@ -114,7 +114,7 @@ class TRTHungarianLoss(nn.Module):
             }
             target_dict = {
                 "params": target_params[i, : targets_lengths[i]],
-                "coords": target_coords[i, : targets_lengths[i]]
+                "coords": target_coords[i, : targets_lengths[i]],
             }
             row_ind, col_ind = match_targets(
                 outputs=pred_dict,
@@ -126,9 +126,7 @@ class TRTHungarianLoss(nn.Module):
                 matched_outputs, matched_targets, distance=self._params_distance
             )
 
-            coords_loss += F.l1_loss(
-                pred_coords[i, row_ind], target_coords[i, col_ind]
-            )
+            coords_loss += F.l1_loss(pred_coords[i, row_ind], target_coords[i, col_ind])
 
             matched_targets = adjust_targets(
                 row_ind=row_ind,
@@ -139,8 +137,7 @@ class TRTHungarianLoss(nn.Module):
             label_loss += self._class_loss_func(pred_logits[i], matched_targets)
 
             segmentation_loss += self._segmentation_loss_func(
-                preds_segmentation_logits[i].squeeze(-1),
-                target_segmentation_labels[i]
+                preds_segmentation_logits[i].squeeze(-1), target_segmentation_labels[i]
             )
 
         return hungarian_loss, coords_loss, label_loss, segmentation_loss
@@ -162,18 +159,20 @@ class TRTHungarianLoss(nn.Module):
         preds_segmentation_logits = preds["hit_logits"]
         target_segmentation_labels = (targets["hit_labels"] > -1).to(torch.float)
         if not self.intermediate:
-            hungarian_loss, coords_loss, label_loss, segmentation_loss = self._calc_loss(
-                pred_params=pred_params,
-                target_params=target_params,
-                pred_coords=pred_coords,
-                target_coords=target_coords,
-                preds_lengths=preds_lengths,
-                targets_lengths=targets_lengths,
-                pred_logits=pred_logits,
-                target_labels=target_labels,
-                preds_segmentation_logits=preds_segmentation_logits,
-                target_segmentation_labels=target_segmentation_labels,
-                batch_size=batch_size,
+            hungarian_loss, coords_loss, label_loss, segmentation_loss = (
+                self._calc_loss(
+                    pred_params=pred_params,
+                    target_params=target_params,
+                    pred_coords=pred_coords,
+                    target_coords=target_coords,
+                    preds_lengths=preds_lengths,
+                    targets_lengths=targets_lengths,
+                    pred_logits=pred_logits,
+                    target_labels=target_labels,
+                    preds_segmentation_logits=preds_segmentation_logits,
+                    target_segmentation_labels=target_segmentation_labels,
+                    batch_size=batch_size,
+                )
             )
         else:
             # TODO
@@ -182,18 +181,21 @@ class TRTHungarianLoss(nn.Module):
             segmentation_loss = torch.tensor(0.0).to(pred_params.device)
 
             for step in range(pred_params.shape[0]):
-                hungarian_loss_step, coords_loss, label_loss_step, segmentation_loss_step = (
-                    self._calc_loss(
-                        pred_params=pred_params[step],
-                        target_params=target_params,
-                        preds_lengths=preds_lengths,
-                        targets_lengths=targets_lengths,
-                        pred_logits=pred_logits[step],
-                        target_labels=target_labels,
-                        preds_segmentation_logits=preds_segmentation_logits,
-                        target_segmentation_labels=target_segmentation_labels,
-                        batch_size=batch_size,
-                    )
+                (
+                    hungarian_loss_step,
+                    coords_loss,
+                    label_loss_step,
+                    segmentation_loss_step,
+                ) = self._calc_loss(
+                    pred_params=pred_params[step],
+                    target_params=target_params,
+                    preds_lengths=preds_lengths,
+                    targets_lengths=targets_lengths,
+                    pred_logits=pred_logits[step],
+                    target_labels=target_labels,
+                    preds_segmentation_logits=preds_segmentation_logits,
+                    target_segmentation_labels=target_segmentation_labels,
+                    batch_size=batch_size,
                 )
                 hungarian_loss += hungarian_loss_step
                 label_loss += label_loss_step
@@ -254,8 +256,12 @@ class BaselineLoss(nn.Module):
 
             if "cluster_labels" in preds:
                 mask = (
-                    preds["hit_logits"][i].sigmoid() > 0.5
-                ).detach().cpu().numpy().squeeze(-1)
+                    (preds["hit_logits"][i].sigmoid() > 0.5)
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .squeeze(-1)
+                )
                 true_labels = target_cluster_labels[i, mask]
                 clustering_score += v_measure_score(
                     labels_true=true_labels, labels_pred=preds["cluster_labels"][i]
