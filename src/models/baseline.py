@@ -3,9 +3,9 @@ from typing import Dict
 import numpy as np
 import torch
 from sklearn.cluster import DBSCAN
-from torch import nn, Tensor
+from torch import Tensor, nn
 
-from src.model import PointTransformerEncoder
+from src.models.encoders import PointTransformerEncoder
 
 
 class TRTBaseline(nn.Module):
@@ -14,7 +14,7 @@ class TRTBaseline(nn.Module):
         channels: int = 64,
         input_channels: int = 3,
         num_heads: int = 4,
-        num_candidates: int = 5
+        num_candidates: int = 5,
     ) -> None:
         super().__init__()
 
@@ -69,9 +69,7 @@ class TRTBaseline(nn.Module):
 
         return {
             "params": output_params,
-            "vertex": torch.tensor(
-                [0.5, 0.5, 0.5], dtype=torch.float, device=x.device
-            ),
+            "vertex": torch.tensor([0.5, 0.5, 0.5], dtype=torch.float, device=x.device),
             "hit_logits": outputs_segmentation,
             "cluster_labels": cluster_labels,
         }

@@ -1,4 +1,4 @@
-from torch import nn, Tensor
+from torch import Tensor, nn
 
 
 class TRTDetectDecoderLayer(nn.Module):
@@ -52,3 +52,39 @@ class TRTDetectDecoderLayer(nn.Module):
         x = x + self.dropout(x2)
         x = self.norm3(x)
         return x
+
+
+class TRTEncoderLayer(nn.Module):
+    def __init__(
+        self,
+        channels: int = 64,
+        dim_ff: int = 32,
+        num_heads: int = 4,
+        activation: nn.Module = nn.ReLU(),
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        self.self_attn = nn.MultiheadAttention(
+            channels, num_heads, dropout=dropout, batch_first=True
+        )
+        self.ff = nn.Sequential(
+            nn.Linear(channels, dim_ff),
+            activation,
+            nn.Linear(dim_ff, channels),
+        )
+        self.norm1 = nn.LayerNorm(channels)
+        self.norm2 = nn.LayerNorm(channels)
+
+        self.dropout = nn.Dropout(dropout)
+
+        self.activation = nn.ReLU()  # nn.LeakyReLU(negative_slope=0.2)
+
+    def forward(
+        self,
+        x: Tensor,
+        mask: Tensor | None = None,
+    ) -> Tensor:
+        x1, _ = self.self_attn(x, x, x, key_padding_mask=~mask)
+        x1 = self.norm2(self.ff(self.norm1(x + x1)))
+        return x1

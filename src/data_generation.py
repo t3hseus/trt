@@ -396,7 +396,7 @@ class SPDEventGenerator:
         self,
         detector_eff: Optional[float] = None,
         add_fakes: Optional[bool] = None,
-        return_additional_info: bool = False
+        return_additional_info: bool = False,
     ) -> Event | tuple[Event, dict[str, np.ndarray]]:
         if detector_eff is None:
             detector_eff = self.detector_eff
@@ -418,10 +418,7 @@ class SPDEventGenerator:
         track_ids = []
         params = {}
         fakes = None
-        additional = {
-            "first_hits": [],
-            "last_hits": []
-        }
+        additional = {"first_hits": [], "last_hits": []}
         for track in range(0, n_tracks):
             track_hits = np.asarray([], dtype=np.float32)  # empty array
             # if generator returns empty track, call it again
@@ -451,15 +448,18 @@ class SPDEventGenerator:
         if return_additional_info:
             additional["first_hits"] = np.vstack(additional["first_hits"])
             additional["last_hits"] = np.vstack(additional["last_hits"])
-            return Event(
-                hits=hits,
-                track_ids=track_ids,
-                momentums=momentums,
-                fakes=fakes,
-                track_params=params,
-                missing_hits_mask=missing_hits_mask,
-                vertex=vertex,
-            ), additional
+            return (
+                Event(
+                    hits=hits,
+                    track_ids=track_ids,
+                    momentums=momentums,
+                    fakes=fakes,
+                    track_params=params,
+                    missing_hits_mask=missing_hits_mask,
+                    vertex=vertex,
+                ),
+                additional,
+            )
 
         return Event(
             hits=hits,

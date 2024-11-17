@@ -1,0 +1,18 @@
+_target_: src.model.TRTHybrid
+_recursive_: true
+channels: 64
+hit_encoder:
+  _target_: src.models.encoders.HitEncoder
+  _recursive_: true
+  in_channels: 3
+  activation:
+    _target_: torch.nn.modules.activation.ReLU
+  channels: ${model.channels}
+  encoder:
+    _target_: src.models.encoders.TRTEncoder
+    channels: ${model.channels}
+num_candidates: 20
+num_points: 512,
+num_out_params: 7
+return_intermediate: False
+zero_based_decoder: False

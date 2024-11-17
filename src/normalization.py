@@ -5,7 +5,8 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-from src.constants import OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE, THETA_RANGE
+from src.constants import (OX_RANGE, OY_RANGE, OZ_RANGE, PHI_RANGE, PT_RANGE,
+                           THETA_RANGE)
 from src.data_generation import TrackParams, Vertex
 
 DType = TypeVar("DType", bound=np.generic)

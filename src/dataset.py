@@ -6,12 +6,8 @@ import torch
 from torch.utils.data import Dataset
 
 from .data_generation import ArrayN, ArrayNx3, SPDEventGenerator
-from .normalization import (
-    HitsNormalizer,
-    NormTParamsArr,
-    TParamsArr,
-    TrackParamsNormalizer,
-)
+from .normalization import (HitsNormalizer, NormTParamsArr, TParamsArr,
+                            TrackParamsNormalizer)
 
 
 class DatasetMode(IntEnum):
@@ -183,7 +179,7 @@ class SPDEventsDataset(Dataset):
             param_labels=param_labels,
             mask=np.ones(len(hits), dtype=bool),
             first_hits=first_hits,
-            last_hits=last_hits
+            last_hits=last_hits,
         )
 
 

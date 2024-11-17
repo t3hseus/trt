@@ -1,9 +1,12 @@
+import logging
 import os
-from datetime import datetime
 from os.path import join as pjoin
 from typing import Dict
 
+import hydra
 import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig
 from pytorch_lightning import seed_everything
 from torch import Tensor, nn, optim
 from torch.utils.data import DataLoader
@@ -13,43 +16,28 @@ from torchmetrics.classification import Accuracy, Precision, Recall
 from tqdm import tqdm
 
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
-from src.loss import TRTHungarianLoss, BaselineLoss
-from src.model import TRTHybrid
-from src.models.baseline import TRTBaseline
-from src.models.model_pointnet import TRTPointnetHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 
-seed_everything(13)
-
-MAX_EVENT_TRACKS = 5
-NUM_CANDIDATES = MAX_EVENT_TRACKS * 2
-TRUNCATION_LENGTH = 1024
-BATCH_SIZE = 4
-NUM_EVENTS_TRAIN = 50000
-NUM_EVENTS_VALID = 3000
-EPOCHS_NUM = 30
-INTERMEDIATE = False
-FREEZE = False
-PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
-BASELINE = False
+logging.basicConfig()
+logger = logging.getLogger("train")
 
 
-def main():
-    writer = SummaryWriter()
-    out_dir = pjoin(
-        r"weights",
-        datetime.today().strftime("%Y-%m-%d-%H-%M-%S"),
-    )
+@hydra.main(version_base=None, config_path="configs", config_name="train")
+def main(cfg: DictConfig):
+    seed_everything(cfg.random_seed)
+    writer = SummaryWriter(log_dir=cfg.hydra_dir)
+    out_dir = cfg.hydra_dir
+    logger.info("Starting basic objects instantiate")
 
     hits_norm = HitsNormalizer()  # None
     params_norm = TrackParamsNormalizer()  # None
     train_loader, val_loader = prepare_data(
         hits_norm=hits_norm,
         params_norm=params_norm,
-        max_event_tracks=MAX_EVENT_TRACKS,
-        num_events_train=NUM_EVENTS_TRAIN,
-        num_events_valid=NUM_EVENTS_VALID,
-        batch_size=BATCH_SIZE,
+        max_event_tracks=cfg.dataset.max_event_tracks,
+        num_events_train=cfg.dataset.train_samples,
+        num_events_valid=cfg.dataset.val_samples,
+        batch_size=cfg.batch_size,
     )
 
     device = (
@@ -58,46 +46,32 @@ def main():
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     print("Device is", device)
-    if not BASELINE:
-        model = TRTHybrid(
-            num_candidates=NUM_CANDIDATES,
-            num_points=TRUNCATION_LENGTH,
-            num_out_params=7,
-            return_intermediate=INTERMEDIATE,
-            zero_based_decoder=False
-        ).to(device)
-    else:
-        model = TRTBaseline().to(device)
-    if PRETRAINED_PATH:
-        if not torch.cuda.is_available():
-            model.load_state_dict(
-                torch.load(
-                    PRETRAINED_PATH, weights_only=True, map_location=torch.device("cpu")
+    model = instantiate(cfg.model).to(device)
+
+    if cfg.resume_from_checkpoint:
+        map_location = "cpu" if not torch.cuda.is_available() else "cuda"
+        model.load_state_dict(
+            torch.load(
+                    cfg.resume_from_chekpoint, weights_only=True, map_location=map_location
                 )
             )
-        else:
-            model.load_state_dict(torch.load(PRETRAINED_PATH, weights_only=True))
-    if FREEZE:
+    if cfg.freeze_model:
         model = freeze_model(model, model.params_head)
-    if not BASELINE:
-        criterion = TRTHungarianLoss(
-            weights=(0.5, 0.5, 0.4, 0.3, 0.2), intermediate=INTERMEDIATE
-        ).to(device)
-    else:
-        criterion = BaselineLoss().to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
+    criterion = instantiate(cfg.criterion).to(device)
+    optimizer = instantiate(cfg.optimizer, model.parameters(), lr=0.0001, weight_decay=0.0001)
     hits_metrics = {
         "accuracy": Accuracy(task="binary", threshold=0.5).to(device),
         "precision": Precision(task="binary", threshold=0.5).to(device),
         "recall": Recall(task="binary", threshold=0.5).to(device),
     }
 
-    progress_bar = tqdm(range(EPOCHS_NUM))
+    progress_bar = tqdm(range(cfg.num_epochs))
     min_loss_train = min_loss_val = 1e5
     for epoch in progress_bar:
         train_loss, min_loss_train = train_epoch(
             train_loader=train_loader,
             model=model,
+            num_candidates=model.num_candidates,
             criterion=criterion,
             min_loss_train=min_loss_train,
             optimizer=optimizer,
@@ -112,6 +86,7 @@ def main():
             val_loss, min_loss_val = val_epoch(
                 val_loader=val_loader,
                 model=model,
+                num_candidates=model.num_candidates,
                 criterion=criterion,
                 min_loss_val=min_loss_val,
                 writer=writer,
@@ -133,11 +108,11 @@ def main():
 def prepare_data(
     hits_norm,
     params_norm,
-    max_event_tracks: int = MAX_EVENT_TRACKS,
-    truncation_length: int = TRUNCATION_LENGTH,
-    num_events_train: int = NUM_EVENTS_TRAIN,
-    num_events_valid: int = NUM_EVENTS_VALID,
-    batch_size: int = BATCH_SIZE,
+    max_event_tracks: int = 5,
+    truncation_length: int = 512,
+    num_events_train: int = 1,
+    num_events_valid: int = 1,
+    batch_size: int = 1,
 ) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
     train_data = SPDEventsDataset(
         n_samples=num_events_train,
@@ -209,6 +184,7 @@ def train_epoch(
     optimizer: optim.Optimizer,
     writer: SummaryWriter,
     hits_metrics: dict[str, Metric],
+    num_candidates: int = 5,
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
     min_loss_train: float = 1000000.0,
@@ -230,7 +206,7 @@ def train_epoch(
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
-                [NUM_CANDIDATES] * batch["inputs"].shape[0]
+                [num_candidates] * batch["inputs"].shape[0]
             ).to(device),
             targets_lengths=batch["n_tracks_per_sample"].to(device),
         )
@@ -278,6 +254,7 @@ def val_epoch(
     criterion: nn.Module,
     writer: SummaryWriter,
     hits_metrics: dict[str, Metric],
+    num_candidates: int = 5,
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
     min_loss_val: float = 1000000.0,
@@ -298,7 +275,7 @@ def val_epoch(
                 "hit_labels": batch["hit_labels"].to(device),
             },
             preds_lengths=torch.LongTensor(
-                [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
+                [num_candidates] * batch["inputs"].shape[0]
             ).to(device),
             targets_lengths=batch["n_tracks_per_sample"].to(device),
         )
