@@ -210,7 +210,7 @@ class TRTHungarianLoss(nn.Module):
 
         total_loss = (
             self._weights[0] * hungarian_loss
-            + self._weights[1] * label_loss
+            + self._weights[1] * coords_loss
             + self._weights[2] * label_loss
             + self._weights[3] * vertex_loss
             + self._weights[4] * segmentation_loss

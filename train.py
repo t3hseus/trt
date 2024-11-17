@@ -15,17 +15,18 @@ from tqdm import tqdm
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
 from src.loss import TRTHungarianLoss, BaselineLoss
 from src.model import TRTHybrid, TRTBaseline
+from src.models.model_pointnet import TRTPointnetHybrid
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 
 seed_everything(13)
 
 MAX_EVENT_TRACKS = 5
-NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
+NUM_CANDIDATES = MAX_EVENT_TRACKS * 2
 TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 4
-NUM_EVENTS_TRAIN = 4  # 50000
-NUM_EVENTS_VALID = 4 # 10000
-EPOCHS_NUM = 1000
+NUM_EVENTS_TRAIN = 50000
+NUM_EVENTS_VALID = 3000
+EPOCHS_NUM = 30
 INTERMEDIATE = False
 FREEZE = False
 PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
@@ -79,7 +80,7 @@ def main():
         model = freeze_model(model, model.params_head)
     if not BASELINE:
         criterion = TRTHungarianLoss(
-            weights=(0.25, 0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
+            weights=(0.5, 0.5, 0.4, 0.3, 0.2), intermediate=INTERMEDIATE
         ).to(device)
     else:
         criterion = BaselineLoss().to(device)
