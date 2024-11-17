@@ -1,6 +1,7 @@
 """
 This is the best model on 22.10 (morning)
 """
+
 import torch
 from torch import Tensor, nn
 
@@ -206,7 +207,7 @@ class TRTHybrid(nn.Module):
         num_detector_layers: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
-        zero_based_decoder: bool = True
+        zero_based_decoder: bool = True,
     ) -> None:
         super().__init__()
 
@@ -310,7 +311,9 @@ class TRTHybrid(nn.Module):
         global_feature = torch.sum(x_encoder * mask.unsqueeze(-1), dim=1) / denom
         # global_feature = x_encoder.mean(dim=-2)
         if global_feature.shape[0] > 1:
-            global_feature = global_feature.squeeze(-2)  # If we have 1-el batch (for test and for simple train)
+            global_feature = global_feature.squeeze(
+                -2
+            )  # If we have 1-el batch (for test and for simple train)
         outputs_vertex = self.vertex_head(global_feature)
 
         # decoder transformer

@@ -286,7 +286,9 @@ class TRTHybrid(nn.Module):
         outputs_params[..., 1] = (
             # atan2 is in range [-pi; pi], but we expect phi to be from 0 to 2pi and
             # normalize it to lie in range [0; 1]
-            (torch.atan2(phi_sin, phi_cos) + torch.pi) / 2 / torch.pi
+            (torch.atan2(phi_sin, phi_cos) + torch.pi)
+            / 2
+            / torch.pi
         )
         outputs_params[..., 2] = outputs_params_[..., 3]  # theta
         outputs_params[..., 3] = outputs_params_[..., 4]  # charge
