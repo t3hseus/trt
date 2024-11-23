@@ -22,7 +22,8 @@ num_epochs: 40
 batch_size: 32
 random_seed: 13
 logging_dir: ${hydra_dir}
-resume_from_checkpoint: #r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
+resume_from_checkpoint: # E:\projects\trt\results\hydra\2024-11-17\23-58-59\checkpoint_epoch_39_val.pth
+#r"D:\projects\trt\results\hydra\2024-05-13\15-12-40\TRT\version_0\epoch=265-step=266.ckpt"
 num_workers: 1
 pin_memory: False
 freeze_model: False

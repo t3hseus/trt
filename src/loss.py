@@ -126,6 +126,9 @@ class TRTHungarianLoss(nn.Module):
                 matched_outputs, matched_targets, distance=self._params_distance
             )
 
+            hungarian_loss += 0.2 * torch.abs(matched_outputs[:, 0]**2 - matched_targets[:, 0]**2).sum()  # make pt loss twice other
+            hungarian_loss += 0.1 * torch.relu(matched_outputs - 1).sum()  # regularization
+            hungarian_loss += 0.1 * torch.relu(-1 * matched_outputs).sum()  # regularization
             coords_loss += F.l1_loss(pred_coords[i, row_ind], target_coords[i, col_ind])
 
             matched_targets = adjust_targets(

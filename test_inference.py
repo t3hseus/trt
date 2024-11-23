@@ -39,9 +39,11 @@ def inference(
 
     model = instantiate(cfg.model)
     if not torch.cuda.is_available():
-        model.load_state_dict(torch.load(cfg.load_checkpoint, weights_only=True, map_location=torch.device('cpu')))
+        checkpoint = torch.load(cfg.load_checkpoint, weights_only=True, map_location=torch.device('cpu'))
+        model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        model.load_state_dict(torch.load(cfg.load_checkpoint, weights_only=True))
+        checkpoint = torch.load(cfg.load_checkpoint, weights_only=True)
+        model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     vertex_dists = []
     accuracies = []
@@ -54,6 +56,9 @@ def inference(
 
         preds = model(inputs, mask=mask)
         track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
+        if torch.sum(track_mask) == 0:
+            soft_res = torch.softmax(preds["logits"], dim=-1)[:, :, 0]
+            track_mask = soft_res >= soft_res.max()-0.01
         print("Selected tracks: ", (track_mask).sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(
@@ -274,9 +279,9 @@ def plot(
 
     filtered_pred_tracks = {}
     track_mask = track_mask.squeeze()
-    for i, track in pred_tracks.items():
-        if track_mask[i]:
-            filtered_pred_tracks[i] = track
+    for  j, track in pred_tracks.items():
+        if track_mask[j]:
+            filtered_pred_tracks[j] = track
     if filtered_pred_tracks:
         filtered_pred_hits, filtered_pred_labels = generate_event_from_params(
             event_gen, filtered_pred_tracks, pred_vertex

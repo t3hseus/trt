@@ -18,4 +18,4 @@ batch_size: 1
 random_seed: 13
 num_images: 10
 logging_dir: ${hydra_dir}
-load_checkpoint: E:\projects\trt\results\hydra\2024-11-17\18-42-32\trt_hybrid_val_38.pt
+load_checkpoint: E:\projects\trt\results\hydra\2024-11-21\21-37-25\checkpoint_epoch_39_val.pth

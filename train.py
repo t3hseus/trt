@@ -15,6 +15,7 @@ from torchmetrics import Metric
 from torchmetrics.classification import Accuracy, Precision, Recall
 from tqdm import tqdm
 
+from src.checkpoint_saver import CheckpointManager
 from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 
@@ -45,16 +46,14 @@ def main(cfg: DictConfig):
         if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available() else "cpu"
     )
-    print("Device is", device)
+    logger.info("Device is %s", device)
     model = instantiate(cfg.model).to(device)
 
     if cfg.resume_from_checkpoint:
         map_location = "cpu" if not torch.cuda.is_available() else "cuda"
-        model.load_state_dict(
-            torch.load(
-                    cfg.resume_from_chekpoint, weights_only=True, map_location=map_location
-                )
-            )
+        checkpoint = torch.load(cfg.resume_from_checkpoint, map_location=map_location)
+        model.load_state_dict(checkpoint["model_state_dict"])
+
     if cfg.freeze_model:
         model = freeze_model(model, model.params_head)
     criterion = instantiate(cfg.criterion).to(device)
@@ -64,9 +63,11 @@ def main(cfg: DictConfig):
         "precision": Precision(task="binary", threshold=0.5).to(device),
         "recall": Recall(task="binary", threshold=0.5).to(device),
     }
-
+    train_checkpointer = CheckpointManager(save_dir=cfg.hydra_dir, suffix="_train")
+    val_checkpointer = CheckpointManager(save_dir=cfg.hydra_dir, suffix="_val")
     progress_bar = tqdm(range(cfg.num_epochs))
     min_loss_train = min_loss_val = 1e5
+    logger.info("Start training... \n")
     for epoch in progress_bar:
         train_loss, min_loss_train = train_epoch(
             train_loader=train_loader,
@@ -80,8 +81,10 @@ def main(cfg: DictConfig):
             device=device,
             epoch=epoch,
             out_dir=out_dir,
+            checkpointer=train_checkpointer
         )
 
+        logger.info("Minimal loss is %s", min_loss_train)
         with torch.no_grad():
             val_loss, min_loss_val = val_epoch(
                 val_loader=val_loader,
@@ -94,6 +97,7 @@ def main(cfg: DictConfig):
                 device=device,
                 epoch=epoch,
                 out_dir=out_dir,
+                checkpointer=val_checkpointer
             )
 
         progress_bar.set_postfix(
@@ -183,6 +187,7 @@ def train_epoch(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     writer: SummaryWriter,
+    checkpointer: CheckpointManager,
     hits_metrics: dict[str, Metric],
     num_candidates: int = 5,
     epoch: int = 0,
@@ -231,6 +236,7 @@ def train_epoch(
                 batch_metrics[metric],
                 epoch * len(train_loader) + num_train_batches,
             )
+    checkpointer.manage_checkpoint(model, optimizer, epoch, loss)
 
     if train_loss / len(train_loader) < min_loss_train:
         min_loss_train = train_loss / len(train_loader)
@@ -253,6 +259,7 @@ def val_epoch(
     val_loader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     writer: SummaryWriter,
+    checkpointer: CheckpointManager,
     hits_metrics: dict[str, Metric],
     num_candidates: int = 5,
     epoch: int = 0,
@@ -297,11 +304,9 @@ def val_epoch(
                 batch_metrics[metric],
                 epoch * len(val_loader) + num_val_batches,
             )
-
+    checkpointer.manage_checkpoint(model, optimizer=None, epoch=epoch, loss=loss)
     if val_loss / len(val_loader) < min_loss_val:
         min_loss_val = val_loss / len(val_loader)
-        os.makedirs(out_dir, exist_ok=True)
-        torch.save(model.state_dict(), pjoin(out_dir, f"trt_hybrid_val_{epoch}.pt"))
 
     writer.add_scalar("val_loss_epoch", val_loss / len(val_loader), epoch)
     for metric in hits_metrics:
