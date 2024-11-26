@@ -149,7 +149,7 @@ class TRTHybrid(nn.Module):
             nn.Linear(channels // 2, channels // 4),
             nn.LayerNorm(channels // 4),
             self.activation,
-            nn.Linear(channels // 4, 6),
+            nn.Linear(channels // 4, 9),
         )
         self.vertex_head = nn.Sequential(
             nn.Linear(channels, channels // 4),

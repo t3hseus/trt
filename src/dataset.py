@@ -25,6 +25,7 @@ class DatasetSample(TypedDict):
     orig_params: Union[TParamsArr, NormTParamsArr]
     first_hits: ArrayNx3[np.float32]
     last_hits: ArrayNx3[np.float32]
+    mean_hits: ArrayNx3[np.float32]
 
 
 class BatchSample(TypedDict):
@@ -96,7 +97,7 @@ class SPDEventsDataset(Dataset):
         np.random.seed(self._initial_seed + idx)
         # generate sample
         event, additional = self.spd_gen.generate_spd_event(return_additional_info=True)
-        first_hits, last_hits = additional.values()
+        first_hits, last_hits, mean_hits = additional.values()
         # get all hits including fakes
         if self._add_fakes:
             hits = np.vstack([event.hits, event.fakes])
@@ -157,6 +158,7 @@ class SPDEventsDataset(Dataset):
             params[: event.n_tracks] = params[shuffle_idx]
             first_hits[: event.n_tracks] = first_hits[shuffle_idx]
             last_hits[: event.n_tracks] = last_hits[shuffle_idx]
+            mean_hits[: event.n_tracks] = mean_hits[shuffle_idx]
             orig_params[: event.n_tracks] = orig_params[shuffle_idx]
             param_labels[: event.n_tracks] = param_labels[shuffle_idx]
 
@@ -165,6 +167,7 @@ class SPDEventsDataset(Dataset):
             hits = self.hits_normalizer(hits)
             first_hits = self.hits_normalizer(first_hits)
             last_hits = self.hits_normalizer(last_hits)
+            mean_hits = self.hits_normalizer(mean_hits)
 
         if self.truncation_length is not None:
             # truncate inputs
@@ -180,6 +183,7 @@ class SPDEventsDataset(Dataset):
             mask=np.ones(len(hits), dtype=bool),
             first_hits=first_hits,
             last_hits=last_hits,
+            mean_hits=mean_hits
         )
 
 
@@ -227,7 +231,7 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
     # params have the fixed size - MAX_TRACKS x N_PARAMS
     target_shape = (batch_size, max_n_tracks, samples[0]["params"].shape[1])
     batch_params = np.zeros(target_shape, dtype=np.float32)
-    batch_end_hits = np.zeros((batch_size, max_n_tracks, 6), dtype=np.float32)
+    batch_end_hits = np.zeros((batch_size, max_n_tracks, 9), dtype=np.float32)
     batch_orig_params = np.zeros(target_shape, dtype=np.float32)
     batch_labels = np.ones((batch_size, max_n_tracks), dtype=np.int32)
     batch_hit_labels = np.zeros((batch_size, max_n_hits), dtype=np.int32) - 1
@@ -238,7 +242,8 @@ def collate_fn_with_segmentation_loss(samples: List[DatasetSample]) -> BatchSamp
         batch_mask[i, : len(sample["hits"])] = sample["mask"]
         batch_params[i, : len(sample["params"])] = sample["params"]
         batch_end_hits[i, : len(sample["first_hits"]), :3] = sample["first_hits"]
-        batch_end_hits[i, : len(sample["last_hits"]), 3:] = sample["last_hits"]
+        batch_end_hits[i, : len(sample["mean_hits"]), 3:6] = sample["mean_hits"]
+        batch_end_hits[i, : len(sample["last_hits"]), 6:] = sample["last_hits"]
         batch_labels[i, : len(sample["params"])] = 0  # class 0 is gt, 1 is no-object
         batch_orig_params[i, : len(sample["orig_params"])] = sample["orig_params"]
 

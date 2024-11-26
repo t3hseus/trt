@@ -418,7 +418,7 @@ class SPDEventGenerator:
         track_ids = []
         params = {}
         fakes = None
-        additional = {"first_hits": [], "last_hits": []}
+        additional = {"first_hits": [], "last_hits": [], "mean_hits": []}
         for track in range(0, n_tracks):
             track_hits = np.asarray([], dtype=np.float32)  # empty array
             # if generator returns empty track, call it again
@@ -433,6 +433,7 @@ class SPDEventGenerator:
             if return_additional_info:
                 additional["first_hits"].append(track_hits[0])
                 additional["last_hits"].append(track_hits[-1])
+                additional["mean_hits"].append(np.mean(track_hits, axis=0))
             momentums.append(track_momentums)
             params[track] = track_params
             track_ids.append(np.full(len(track_hits), track))
@@ -448,6 +449,7 @@ class SPDEventGenerator:
         if return_additional_info:
             additional["first_hits"] = np.vstack(additional["first_hits"])
             additional["last_hits"] = np.vstack(additional["last_hits"])
+            additional["mean_hits"] = np.vstack(additional["mean_hits"])
             return (
                 Event(
                     hits=hits,
