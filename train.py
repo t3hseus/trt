@@ -39,6 +39,7 @@ def main(cfg: DictConfig):
         num_events_train=cfg.dataset.train_samples,
         num_events_valid=cfg.dataset.val_samples,
         batch_size=cfg.batch_size,
+        truncation_length=cfg.dataset.truncation_length
     )
 
     device = (
