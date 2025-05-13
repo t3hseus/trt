@@ -377,9 +377,9 @@ class SPDEventGenerator:
         return hits, momentums, track_params
 
     def generate_fakes(
-        self, n_tracks: int, radii: ArrayN[np.float32]
+        self, n_tracks: int, radii: ArrayN[np.float32], max_fakes_num: int,
     ) -> ArrayNx3[np.float32]:
-        max_fakes = n_tracks**2 * len(radii)
+        max_fakes = min(n_tracks**2 * len(radii), max_fakes_num)
         min_fakes = max_fakes / 2
 
         n_fakes = np.random.randint(min_fakes, max_fakes)
@@ -396,6 +396,7 @@ class SPDEventGenerator:
         self,
         detector_eff: Optional[float] = None,
         add_fakes: Optional[bool] = None,
+        max_hits_allowed: int = 1024
     ) -> Event:
         if detector_eff is None:
             detector_eff = self.detector_eff
@@ -438,7 +439,10 @@ class SPDEventGenerator:
         track_ids = np.concatenate(track_ids)
 
         if add_fakes:
-            fakes = self.generate_fakes(n_tracks=n_tracks, radii=self._radii)
+            max_fakes_num = max(0, max_hits_allowed - hits.shape[0])
+            fakes = self.generate_fakes(
+                n_tracks=n_tracks, radii=self._radii, max_fakes_num=max_fakes_num
+            )
 
         return Event(
             hits=hits,

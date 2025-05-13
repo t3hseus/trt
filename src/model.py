@@ -1,3 +1,4 @@
+import copy
 from typing import Dict
 
 import torch
@@ -78,36 +79,32 @@ class TRTDetectDecoder(nn.Module):
     def __init__(
         self,
         num_layers: int = 4,
-        channels: int = 64,
-        dim_ff: int = 128,
-        num_heads: int = 4,
+        channels: int = 128,
+        dim_feedforward: int = 64,
+        nhead: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
-    ) -> None:
+    ):
         """
         Parameters:
             num_layers: number of decoder blocks aka layers in encoder
             channels: number of input channels, model dimension
-            dim_ff: number of channels in the feedforward module in layer.
+            dim_feedforward: number of channels in the feedforward module in layer.
                 channels -> dim_feedforward -> channels
-            num_heads: number of attention heads per layer
+            nhead: number of attention heads per layer
             dropout: dropout probability
             return_intermediate: if True, intermediate outputs will be
                 returned to compute auxiliary losses
         """
         super().__init__()
-
-        self.layers = nn.ModuleList(
-            [
-                TRTDetectDecoderLayer(
-                    channels=channels,
-                    dim_ff=dim_ff,
-                    num_heads=num_heads,
-                    dropout=dropout,
-                )
-                for _ in range(num_layers)
-            ]
+        module = TRTDetectDecoderLayer(
+            channels=channels,
+            dim_feedforward=dim_feedforward,
+            nhead=nhead,
+            dropout=dropout,
         )
+
+        self.layers = nn.ModuleList([copy.deepcopy(module) for i in range(num_layers)])
         self.return_intermediate = return_intermediate
         self.norm = nn.LayerNorm(channels)
 
@@ -115,54 +112,76 @@ class TRTDetectDecoder(nn.Module):
         self,
         query,
         memory,
-        memory_mask: Tensor | None = None,
-        query_pos: Tensor | None = None,
-    ) -> Tensor:
+        permute_input: bool = True,
+        query_mask: torch.Tensor | None = None,
+        memory_mask: torch.Tensor | None = None,
+        query_key_padding_mask: torch.Tensor | None = None,
+        memory_key_padding_mask: torch.Tensor | None = None,
+        memory_pos: torch.Tensor | None = None,
+        query_pos: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         output = query
-
+        #if permute_input:
+        #  # permute reshape
+        #    memory = memory.permute(0, 2, 1)
+        # query_pos = query_pos.permute(0, 2, 1)
+        # B, N_mem, E_mem
+        hits = memory
         intermediate = []
         for layer in self.layers:
-            output = layer(
+            output, hits = layer(
                 query=output,
-                memory=memory,
+                memory=hits,
+                #query_mask=query_mask,
+                memory_mask=memory_mask,
+                # query_key_padding_mask=query_key_padding_mask,
                 memory_key_padding_mask=memory_mask,
+                # memory_pos=memory_pos,
                 query_pos=query_pos,
             )
+
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
-
-        output = self.norm(output)
         if self.return_intermediate:
             intermediate.pop()
             intermediate.append(output)
             return torch.stack(intermediate)
 
-        return output
+        return output, hits
 
 
 class TRTDetectDecoderLayer(nn.Module):
     def __init__(
         self,
         channels: int = 64,
-        dim_ff: int = 32,
-        num_heads: int = 4,
+        dim_feedforward: int = 32,
+        nhead: int = 4,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
         self.self_attn = nn.MultiheadAttention(
-            channels, num_heads, dropout=dropout, batch_first=True
+            channels, nhead, dropout=dropout, batch_first=True
         )
         self.cross_attn = nn.MultiheadAttention(
-            channels, num_heads, dropout=dropout, batch_first=True
+            channels, nhead, dropout=dropout, batch_first=True
+        )
+        self.hit_cross_attn = nn.MultiheadAttention(
+            channels, nhead, dropout=dropout, batch_first=True
         )
 
-        self.lin1 = nn.Linear(channels, dim_ff)
-        self.lin2 = nn.Linear(dim_ff, channels)
+        self.lin1 = nn.Linear(channels, dim_feedforward)
+        self.lin2 = nn.Linear(dim_feedforward, channels)
+
+        self.lin3 = nn.Linear(channels, dim_feedforward)
+        self.lin4 = nn.Linear(dim_feedforward, channels)
 
         self.norm1 = nn.LayerNorm(channels)
         self.norm2 = nn.LayerNorm(channels)
         self.norm3 = nn.LayerNorm(channels)
+
+        self.norm4 = nn.LayerNorm(channels)
+        self.norm5 = nn.LayerNorm(channels)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -170,34 +189,48 @@ class TRTDetectDecoderLayer(nn.Module):
 
     def forward(
         self,
-        query: Tensor,
-        memory: Tensor,
-        query_pos: Tensor,
-        memory_mask: Tensor | None = None,
-        memory_key_padding_mask: Tensor = None,
-    ) -> Tensor:
+        query: torch.Tensor,
+        memory: torch.Tensor,
+        query_pos: torch.Tensor,
+        memory_mask: torch.Tensor | None = None,
+        memory_key_padding_mask: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         q = k = query + query_pos
+        # query2query
         x_att = self.self_attn(q, k, value=query)[0]
         query = self.norm1(query + self.dropout(x_att))
+        # query2hit
         x_att = self.cross_attn(
             query=(query + query_pos),
             key=memory,
             value=memory,
             key_padding_mask=~memory_key_padding_mask,
-            attn_mask=memory_mask,
+            attn_mask=None,
         )[0]
         x = self.norm2(query + self.dropout(x_att))
         x2 = self.lin2(self.dropout(self.activation(self.lin1(x))))
         x = x + self.dropout(x2)
-        x = self.norm3(x)
-        return x
+        queries = self.norm3(x)
+
+        # hit2query
+        hits_att = self.hit_cross_attn(
+            query=memory,
+            key=(query + query_pos),
+            value=(query + query_pos),
+        )[0]
+        hits = self.norm4(memory + self.dropout(hits_att))
+        hits_ff = self.lin4(self.dropout(self.activation(self.lin3(hits))))
+        hits = hits + self.dropout(hits_ff)
+        hits = self.norm5(hits)
+
+        return queries, hits
 
 
 class TRTHybrid(nn.Module):
     def __init__(
         self,
         channels: int = 64,
-        num_points: int = 512,
+        num_hits: int = 512,
         num_candidates: int = 10,
         input_channels: int = 3,
         num_heads: int = 4,
@@ -206,12 +239,12 @@ class TRTHybrid(nn.Module):
         num_detector_layers: int = 4,
         dropout: float = 0.0,
         return_intermediate: bool = False,
-        zero_based_decoder: bool = False,
+        zero_based_decoder: bool = True,
     ) -> None:
         super().__init__()
 
         # channels = num_points // 4
-        self.num_points = num_points
+        self.num_hits = num_hits
         self.dim_model = channels
         self.num_heads = num_heads
         self.return_intermediate = return_intermediate
@@ -240,8 +273,8 @@ class TRTHybrid(nn.Module):
         self.decoder = TRTDetectDecoder(
             channels=channels,
             num_layers=num_detector_layers,
-            dim_ff=channels * 2,
-            num_heads=self.num_heads,
+            dim_feedforward=channels * 2,
+            nhead=self.num_heads,
             dropout=dropout,
             return_intermediate=return_intermediate,
         )
@@ -272,6 +305,11 @@ class TRTHybrid(nn.Module):
             nn.LayerNorm(channels // 4),
             self.activation,
             nn.Linear(channels // 4, num_out_params - 3),
+        )
+        self.mask_head = nn.Sequential(
+            nn.Linear(channels, channels // 2, bias=False),
+            self.activation,
+            nn.Linear(channels // 2, num_candidates, bias=False),
         )
         self.vertex_head = nn.Sequential(
             nn.Linear(channels, channels // 2),  # num of vertex elements
@@ -323,14 +361,16 @@ class TRTHybrid(nn.Module):
         else:
             x_decoder = self.queries_init_layer(global_feature.unsqueeze(-1)).permute(0,2,1)
             #x_decoder = global_feature.repeat(1, self.num_candidates, 1)
-        x = self.decoder(
+        x, hits = self.decoder(
             memory=x_encoder,
             query=x_decoder,
             query_pos=query_pos_embed,
             memory_mask=mask,
+            permute_input=True,
         )
         outputs_class = self.class_head(x)  # no sigmoid, plain logits!
         outputs_coord = self.params_head(x)
+        outputs_mask = self.mask_head(hits)
 
         if return_params_with_vertex:
             # for evaluation (to hide concatenation to
@@ -346,7 +386,8 @@ class TRTHybrid(nn.Module):
             "logits": outputs_class,
             "params": outputs_coord,
             "vertex": outputs_vertex,
-            "hit_logits": outputs_segmentation,
+            "fake_hit_logits": outputs_segmentation,
+            "track_hits_logits": outputs_mask
         }
 
 

@@ -12,24 +12,26 @@ from torchmetrics import Metric
 from torchmetrics.classification import Accuracy, Precision, Recall
 from tqdm import tqdm
 
-from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss
-from src.loss import TRTHungarianLoss, BaselineLoss
+from src.dataset import DatasetMode, SPDEventsDataset, collate_fn_with_segmentation_loss, \
+    collate_fn_with_track_mask_loss
+from src.loss import TRTHungarianLoss, BaselineLoss, compute_mask_loss
+from src.metrics import mask_metrics
 from src.model import TRTHybrid, TRTBaseline
 from src.normalization import HitsNormalizer, TrackParamsNormalizer
 
 seed_everything(13)
 
-MAX_EVENT_TRACKS = 5
-NUM_CANDIDATES = MAX_EVENT_TRACKS * 5
+MAX_EVENT_TRACKS = 10
+NUM_CANDIDATES = MAX_EVENT_TRACKS * 3
 TRUNCATION_LENGTH = 1024
-BATCH_SIZE = 4
-NUM_EVENTS_TRAIN = 4  # 50000
-NUM_EVENTS_VALID = 4 # 10000
-EPOCHS_NUM = 30
+BATCH_SIZE = 8
+NUM_EVENTS_TRAIN = 100000
+NUM_EVENTS_VALID = 20000
+EPOCHS_NUM = 10000
 INTERMEDIATE = False
 FREEZE = False
-PRETRAINED_PATH = None  # "weights/trt_hybrid_train_baseline.pt"
-BASELINE = True
+PRETRAINED_PATH = "" # "weights/trt_hybrid_train_baseline.pt"
+BASELINE = False
 
 
 def main():
@@ -59,7 +61,7 @@ def main():
     if not BASELINE:
         model = TRTHybrid(
             num_candidates=NUM_CANDIDATES,
-            num_points=TRUNCATION_LENGTH,
+            num_hits=TRUNCATION_LENGTH,
             num_out_params=7,
             return_intermediate=INTERMEDIATE,
             zero_based_decoder=False
@@ -79,25 +81,32 @@ def main():
         model = freeze_model(model, model.params_head)
     if not BASELINE:
         criterion = TRTHungarianLoss(
-            weights=(0.25, 0.25, 0.25, 0.25), intermediate=INTERMEDIATE
+            weights=(0.25, 0.25, 0.25, 0.25, 0.25),
+            intermediate=INTERMEDIATE,
+            segmentation_loss=compute_mask_loss
         ).to(device)
     else:
         criterion = BaselineLoss().to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.000001, weight_decay=0.0001)
     hits_metrics = {
-        "accuracy": Accuracy(task="binary", threshold=0.5).to(device),
-        "precision": Precision(task="binary", threshold=0.5).to(device),
-        "recall": Recall(task="binary", threshold=0.5).to(device),
+        "accuracy_0.5": Accuracy(task="binary", threshold=0.5).to(device),
+        "precision_0.5": Precision(task="binary", threshold=0.5).to(device),
+        "recall_0.5": Recall(task="binary", threshold=0.5).to(device),
+        "accuracy_0.8": Accuracy(task="binary", threshold=0.8).to(device),
+        "precision_0.8": Precision(task="binary", threshold=0.8).to(device),
+        "recall_0.8": Recall(task="binary", threshold=0.8).to(device),
     }
 
     progress_bar = tqdm(range(EPOCHS_NUM))
     min_loss_train = min_loss_val = 1e5
+    max_dice_train = max_dice_val = 1e5
     for epoch in progress_bar:
-        train_loss, min_loss_train = train_epoch(
+        train_loss, min_loss_train, max_dice = train_epoch(
             train_loader=train_loader,
             model=model,
             criterion=criterion,
             min_loss_train=min_loss_train,
+            max_dice=max_dice_train,
             optimizer=optimizer,
             writer=writer,
             hits_metrics=hits_metrics,
@@ -107,7 +116,7 @@ def main():
         )
 
         with torch.no_grad():
-            val_loss, min_loss_val = val_epoch(
+            val_loss, min_loss_val, max_dice_val = val_epoch(
                 val_loader=val_loader,
                 model=model,
                 criterion=criterion,
@@ -151,7 +160,7 @@ def prepare_data(
         train_data,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_fn_with_segmentation_loss,
+        collate_fn=collate_fn_with_track_mask_loss,
         num_workers=4,
         pin_memory=False,
         persistent_workers=True,
@@ -170,7 +179,7 @@ def prepare_data(
         val_data,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_fn_with_segmentation_loss,
+        collate_fn=collate_fn_with_track_mask_loss,
         num_workers=4,
         pin_memory=False,
         persistent_workers=True,
@@ -210,11 +219,13 @@ def train_epoch(
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
     min_loss_train: float = 1000000.0,
+    max_dice = 0.,
     out_dir: str = "",
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     train_loss = 0.0
     num_train_batches = 0
     model.train()
+    dice = 0.0
     for batch in train_loader:
         num_train_batches += 1
         optimizer.zero_grad(set_to_none=True)
@@ -225,6 +236,7 @@ def train_epoch(
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
                 "hit_labels": batch["hit_labels"].to(device),
+                "hit_track_masks": batch["hit_track_masks"].to(device),
             },
             preds_lengths=torch.LongTensor(
                 [NUM_CANDIDATES] * batch["inputs"].shape[0]
@@ -241,11 +253,20 @@ def train_epoch(
         )
 
         batch_metrics = calc_hits_metrics(
-            outputs=outputs["hit_logits"],
+            outputs=outputs["fake_hit_logits"],
             targets=(batch["hit_labels"].to(device) > -1).to(torch.float),
             hits_metrics=hits_metrics,
         )
         batch_metrics.update(loss_components)
+
+        match = criterion.last_batch_match
+        track_hit_targets = (batch["hit_track_masks"].to(device).to(device) > 0).to(torch.float).transpose(-1, 1)
+        batch_metrics.update(mask_metrics(
+            outputs=outputs["track_hits_logits"],
+            targets=track_hit_targets,
+            match=match
+        ))
+        dice += batch_metrics["dice"]
         for metric in batch_metrics:
             writer.add_scalar(
                 "train_" + metric,
@@ -257,8 +278,13 @@ def train_epoch(
         min_loss_train = train_loss
         os.makedirs(out_dir, exist_ok=True)
         torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_train.pt"))
+    if dice > max_dice:
+        max_dice = dice
+        os.makedirs(out_dir, exist_ok=True)
+        torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_train_dice.pt"))
 
     writer.add_scalar("train_loss_epoch", train_loss / len(train_loader), epoch)
+    writer.add_scalar("train_dice_epoch", dice / len(train_loader), epoch)
     for metric in hits_metrics:
         writer.add_scalar(
             f"train_{metric}_epoch",
@@ -266,7 +292,7 @@ def train_epoch(
             epoch,
         )
 
-    return train_loss, min_loss_train
+    return train_loss, min_loss_train, max_dice
 
 
 def val_epoch(
@@ -278,9 +304,11 @@ def val_epoch(
     epoch: int = 0,
     device: torch.device | str = torch.cuda,
     min_loss_val: float = 1000000.0,
+    max_dice: float = 0.,
     out_dir: str = "",
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     val_loss = 0.0
+    dice = 0.
     num_val_batches = 0
     model.eval()
     for batch in val_loader:
@@ -292,6 +320,7 @@ def val_epoch(
                 "targets": batch["targets"].to(device),
                 "labels": batch["labels"].to(device),
                 "hit_labels": batch["hit_labels"].to(device),
+                "hit_track_masks": batch["hit_track_masks"].to(device),
             },
             preds_lengths=torch.LongTensor(
                 [MAX_EVENT_TRACKS] * batch["inputs"].shape[0]
@@ -305,11 +334,20 @@ def val_epoch(
         )
 
         batch_metrics = calc_hits_metrics(
-            outputs=outputs["hit_logits"],
+            outputs=outputs["fake_hit_logits"],
             targets=(batch["hit_labels"].to(device) > -1).to(torch.float),
             hits_metrics=hits_metrics,
         )
         batch_metrics.update(loss_components)
+
+        match = criterion.last_batch_match
+        track_hit_targets = (batch["hit_track_masks"].to(device).to(device) > -1).to(torch.float).transpose(-1, 1)
+        batch_metrics.update(mask_metrics(
+            outputs=outputs["track_hits_logits"],
+            targets=track_hit_targets,
+            match=match
+        ))
+        dice += batch_metrics["dice"]
         for metric in batch_metrics:
             writer.add_scalar(
                 "val_" + metric,
@@ -321,6 +359,10 @@ def val_epoch(
         min_loss_val = val_loss
         os.makedirs(out_dir, exist_ok=True)
         torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_val.pt"))
+    if dice > max_dice:
+        max_dice = dice
+        os.makedirs(out_dir, exist_ok=True)
+        torch.save(model.state_dict(), pjoin(out_dir, "trt_hybrid_val_dice.pt"))
 
     writer.add_scalar("val_loss_epoch", val_loss / len(val_loader), epoch)
     for metric in hits_metrics:
@@ -330,7 +372,7 @@ def val_epoch(
             epoch,
         )
 
-    return val_loss, min_loss_val
+    return val_loss, min_loss_val, max_dice
 
 
 if __name__ == "__main__":

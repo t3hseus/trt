@@ -24,7 +24,7 @@ TRUNCATION_LENGTH = 1024
 BATCH_SIZE = 1
 NUM_EVENTS_VALID = 1024
 NUM_IMAGES = 10
-PATH = r"weights\server\trt_hybrid_val.pt"
+PATH = r"weights\2025-05-07-19-50-16\trt_hybrid_val.pt"
 
 seed_everything(13)
 
@@ -49,7 +49,7 @@ def inference(
     )
 
     model = TRTHybrid(
-        num_candidates=25, num_out_params=7, dropout=0.0, num_points=truncation_length, zero_based_decoder=False
+        num_candidates=25, num_out_params=7, dropout=0.0, num_hits=truncation_length, zero_based_decoder=False
     )
     if not torch.cuda.is_available():
         model.load_state_dict(torch.load(weights_path, weights_only=True, map_location=torch.device('cpu')))
@@ -66,7 +66,7 @@ def inference(
         inputs, hit_labels, mask = convert_event_to_batch(hits_norm, fakes_norm)
 
         preds = model(inputs, mask=mask)
-        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.8
+        track_mask = torch.softmax(preds["logits"], dim=-1)[:, :, 0] > 0.5
         print("Selected tracks: ", (~track_mask).sum())
         pred_vertex, pred_tracks = convert_preds_to_param_vertex(preds)
         pred_hits, pred_labels = generate_event_from_params(

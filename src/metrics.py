@@ -3,6 +3,30 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 from torch.nn import L1Loss
 
+from torchmetrics.classification import Accuracy, Precision, Recall
+from torchmetrics.segmentation import DiceScore
+
+
+def mask_metrics(
+       outputs: torch.Tensor, targets: torch.Tensor, match
+) -> dict[str, float]:
+    metrics = {"dice": 0.}
+    preds = torch.sigmoid(outputs) > 0.5
+    cum_len = 0
+    for i in range(len(outputs)):
+        row_ind, col_ind = match[i]
+        matched_preds = preds[i][:, row_ind].unsqueeze(0)
+        matched_targets = targets[i][:, col_ind].unsqueeze(0)
+        cum_len += len(matched_preds)
+        dice = DiceScore(
+            len(preds),
+            include_background=False,
+            average="weighted"
+        )(matched_preds, matched_targets).item()
+        metrics["dice"] += dice
+    metrics["dice"] /= cum_len
+    return metrics
+
 
 def cardinality_error(
     pred_tracks, pred_logits, target_tracks, threshold: float = 0.5

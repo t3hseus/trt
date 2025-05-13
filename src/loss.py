@@ -1,10 +1,31 @@
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Tuple, Union
 
 import torch
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import v_measure_score
 from torch import Tensor, nn
 from torch.nn import functional as F
+
+
+def dice_loss(inputs: Tensor, targets: Tensor, smooth=1):
+    # flatten label and prediction tensors
+    inputs = inputs.view(-1)
+    targets = targets.view(-1)
+
+    intersection = (inputs * targets).sum()
+    dice = (2. * intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
+
+    return 1 - dice
+
+
+def focal_loss(inputs, targets, alpha=0.8, gamma=2):
+    inputs = inputs.view(-1)
+    targets = targets.view(-1)
+    # first compute binary cross-entropy
+    BCE = F.binary_cross_entropy(inputs, targets, reduction='mean')
+    BCE_EXP = torch.exp(-BCE)
+    focal_loss = alpha * (1 - BCE_EXP) ** gamma * BCE
+    return focal_loss
 
 
 def adjust_targets(row_ind, col_ind, targets, num_candidates=10):
@@ -42,6 +63,12 @@ def match_targets(outputs, targets):
     row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
     return row_ind, col_ind
 
+def match_hit_masks(outputs: torch.Tensor, targets: torch.Tensor):
+    preds = torch.sigmoid(outputs)
+    cost_matrix = torch.cdist(preds.float(), targets.float(), p=2)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix.cpu().detach().numpy())
+    return row_ind, col_ind
+
 
 def compute_hungarian_loss(
     outputs: Tensor, targets: Tensor, distance: Callable
@@ -52,6 +79,13 @@ def compute_hungarian_loss(
 
 def params_distance(outputs: Tensor, targets: Tensor) -> Tensor:
     return F.l1_loss(outputs, targets)
+
+
+def compute_mask_loss(
+    outputs: Tensor, targets: Tensor, dice_coeff: float = 10., focal_coeff: float = 20.
+) -> Tensor:
+    inputs = F.sigmoid(outputs)
+    return dice_coeff * dice_loss(inputs, targets) + focal_coeff * focal_loss(inputs, targets)
 
 
 def compute_vertex_distance(
@@ -71,7 +105,7 @@ class TRTHungarianLoss(nn.Module):
         params_distance: Callable = params_distance,
         class_loss: Callable = F.cross_entropy,
         segmentation_loss: Callable = F.binary_cross_entropy_with_logits,
-        weights: tuple[float, ...] = (1, 1, 1, 1),
+        weights: tuple[float, ...] = (1, 1, 1, 1, 1),
         intermediate: bool = False,
         params_with_vertex: bool = False,
     ):
@@ -83,11 +117,14 @@ class TRTHungarianLoss(nn.Module):
         self._segmentation_loss_func = segmentation_loss
         self._weights = weights
         self.params_with_vertex = params_with_vertex
+        self.last_batch_match: Union[list[tuple[int, int]],  None] = []
 
     def _calc_loss(
         self,
         pred_params: Tensor,
+        pred_masks: Tensor,
         target_params: Tensor,
+        target_masks: Tensor,
         preds_lengths: Tensor,
         targets_lengths: Tensor,
         pred_logits: Tensor,
@@ -95,24 +132,28 @@ class TRTHungarianLoss(nn.Module):
         batch_size: int,
         preds_segmentation_logits: Tensor,
         target_segmentation_labels: Tensor,
-    ) -> Tuple[Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         hungarian_loss = torch.tensor(0.0).to(pred_params.device)
         label_loss = torch.tensor(0.0).to(pred_params.device)
         segmentation_loss = torch.tensor(0.0).to(pred_params.device)
+        mask_loss = torch.tensor(0.0).to(pred_params.device)
 
         if not self.params_with_vertex:
             target_params = target_params[..., 3:]
-
+        transposed_masks = pred_masks.transpose(-1, -2)
+        #self.save_match(batch_size,pred_params,target_params,preds_lengths,targets_lengths)
+        self.save_match(batch_size, transposed_masks, target_masks, preds_lengths, targets_lengths)
         for i in range(batch_size):
-            row_ind, col_ind = match_targets(
-                outputs=pred_params[i, : preds_lengths[i]],
-                targets=target_params[i, : targets_lengths[i]],
-            )
+            row_ind, col_ind = self.last_batch_match[i]
             matched_outputs = pred_params[i, row_ind]
             matched_targets = target_params[i, col_ind]
+            matched_masks = transposed_masks[i, row_ind]
+            matched_target_masks = target_masks[i, col_ind]
+
             hungarian_loss += compute_hungarian_loss(
                 matched_outputs, matched_targets, distance=self._params_distance
             )
+            mask_loss += compute_mask_loss(matched_masks, matched_target_masks)
 
             matched_targets = adjust_targets(
                 row_ind=row_ind,
@@ -121,13 +162,32 @@ class TRTHungarianLoss(nn.Module):
                 num_candidates=pred_logits.shape[1],
             )
             label_loss += self._class_loss_func(pred_logits[i], matched_targets)
-
             segmentation_loss += self._segmentation_loss_func(
-                preds_segmentation_logits[i].squeeze(-1),
-                target_segmentation_labels[i]
+                preds_segmentation_logits[i].squeeze(-1), target_segmentation_labels[i]
             )
 
-        return hungarian_loss, label_loss, segmentation_loss
+        return hungarian_loss, mask_loss, label_loss, segmentation_loss
+
+    def save_match(
+            self,
+            batch_size,
+            preds,
+            targets,
+            preds_lengths,
+            targets_lengths,
+
+    ):
+        for i in range(batch_size):
+            #row_ind, col_ind = match_targets(
+            #    outputs=pred_params[i, : preds_lengths[i]],
+            #    targets=target_params[i, : targets_lengths[i]],
+            #)
+            row_ind, col_ind = match_hit_masks(
+                outputs=preds[i, : preds_lengths[i]],
+                targets=targets[i, : targets_lengths[i]].float(),
+            )
+
+            self.last_batch_match.append((row_ind, col_ind))
 
     def forward(
         self,
@@ -136,17 +196,22 @@ class TRTHungarianLoss(nn.Module):
         preds_lengths: Tensor,
         targets_lengths: Tensor,
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
+        self.last_batch_match = []
         batch_size = preds["params"].shape[0]
         pred_logits = preds["logits"]
         target_labels = targets["labels"]
         pred_params = preds["params"]
         target_params = targets["targets"]
-        preds_segmentation_logits = preds["hit_logits"]
+        pred_masks = preds["track_hits_logits"]
+        target_masks = targets["hit_track_masks"]
+        preds_segmentation_logits = preds["fake_hit_logits"]
         target_segmentation_labels = (targets["hit_labels"] > -1).to(torch.float)
         if not self.intermediate:
-            hungarian_loss, label_loss, segmentation_loss = self._calc_loss(
+            hungarian_loss, mask_loss, label_loss, segmentation_loss = self._calc_loss(
                 pred_params=pred_params,
                 target_params=target_params,
+                pred_masks=pred_masks,
+                target_masks=target_masks,
                 preds_lengths=preds_lengths,
                 targets_lengths=targets_lengths,
                 pred_logits=pred_logits,
@@ -160,12 +225,14 @@ class TRTHungarianLoss(nn.Module):
             hungarian_loss = torch.tensor(0.0).to(pred_params.device)
             label_loss = torch.tensor(0.0).to(pred_params.device)
             segmentation_loss = torch.tensor(0.0).to(pred_params.device)
-
+            mask_loss = torch.tensor(0.0).to(pred_params.device)
             for step in range(pred_params.shape[0]):
-                hungarian_loss_step, label_loss_step, segmentation_loss_step = (
+                hungarian_loss_step, mask_loss_step, label_loss_step, segmentation_loss_step = (
                     self._calc_loss(
                         pred_params=pred_params[step],
                         target_params=target_params,
+                        pred_masks=pred_masks,
+                        target_masks=pred_masks,
                         preds_lengths=preds_lengths,
                         targets_lengths=targets_lengths,
                         pred_logits=pred_logits[step],
@@ -175,11 +242,13 @@ class TRTHungarianLoss(nn.Module):
                         batch_size=batch_size,
                     )
                 )
+                mask_loss += mask_loss_step
                 hungarian_loss += hungarian_loss_step
                 label_loss += label_loss_step
                 segmentation_loss += segmentation_loss_step
 
         hungarian_loss /= batch_size
+        mask_loss /= batch_size
         label_loss /= batch_size
         segmentation_loss /= batch_size
 
@@ -192,15 +261,18 @@ class TRTHungarianLoss(nn.Module):
             + self._weights[1] * label_loss
             + self._weights[2] * vertex_loss
             + self._weights[3] * segmentation_loss
+            + self._weights[4] * mask_loss
         )
         loss_components = {
             "params_dist": hungarian_loss.cpu().detach().item(),
             "matching_loss": label_loss.cpu().detach().item(),
             "vertex_dist": vertex_loss.cpu().detach().item(),
             "segmentation_loss": segmentation_loss.cpu().detach().item(),
+            "mask_loss": mask_loss.cpu().detach().item(),
         }
 
         return total_loss, loss_components
+
 
 
 class BaselineLoss(nn.Module):
